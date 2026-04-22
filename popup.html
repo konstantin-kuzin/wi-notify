@@ -11,9 +11,9 @@
       <header class="popup__header">
         <div class="popup__header-main">
           <h1 class="popup__title">My Work Items</h1>
-          <p class="popup__last-updated" id="last-updated">Последняя проверка: ещё не выполнялась</p>
         </div>
         <div class="popup__header-status">
+          <p class="popup__last-updated" id="last-updated">ещё не выполнялась</p>
           <button
             class="popup__refresh"
             id="refresh-button"
@@ -27,11 +27,34 @@
 
       <section class="popup__message hidden" id="message-box"></section>
 
-      <section class="popup__filters" aria-label="Фильтр work items">
-        <button type="button" class="popup__filter-button popup__filter-button--active" data-filter="all">Все</button>
-        <button type="button" class="popup__filter-button" data-filter="active">Active</button>
-        <button type="button" class="popup__filter-button" data-filter="proposed">Proposed</button>
-        <button type="button" class="popup__filter-button" data-filter="resolved">Resolved</button>
+      <section class="popup__toolbar" aria-label="Фильтр и поиск work items">
+        <div class="popup__filters">
+          <button type="button" class="popup__filter-button popup__filter-button--active" data-filter="all">Все</button>
+          <button type="button" class="popup__filter-button" data-filter="active">Active</button>
+          <button type="button" class="popup__filter-button" data-filter="proposed">Proposed</button>
+          <button type="button" class="popup__filter-button" data-filter="resolved">Resolved</button>
+        </div>
+        <div class="popup__search">
+          <label class="popup__search-label" for="search-input">Поиск</label>
+          <div class="popup__search-field">
+            <input
+              type="search"
+              id="search-input"
+              class="popup__search-input"
+              placeholder="Найти…"
+              enterkeyhint="search"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="popup__search-clear hidden"
+              id="search-clear"
+              aria-label="Очистить поиск"
+              title="Очистить поиск"
+            >×</button>
+          </div>
+        </div>
       </section>
 
       <section class="popup__content">

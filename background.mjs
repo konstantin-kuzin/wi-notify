@@ -9,6 +9,7 @@ import {
   logAdoError,
   mapWorkItemToItem,
   queryAssignedWorkItemIds,
+  queryAssignedWorkItemIdsForSearch,
   resolveStateCategoriesByType,
   resolveWorkItemTypeIcons,
   sortWorkItemsNewestFirst,
@@ -17,6 +18,7 @@ import {
 const ALARM_NAME = "refresh-work-items";
 const CHECK_INTERVAL_MINUTES = 10;
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
+const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const STORAGE_KEY = "wiState";
 
 const DEFAULT_STATE = {
@@ -55,24 +57,53 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== REFRESH_MESSAGE_TYPE) {
-    return undefined;
+  if (message?.type === REFRESH_MESSAGE_TYPE) {
+    void restoreBadgeFromState();
+
+    void refreshWorkItems("manual")
+      .then((state) => {
+        sendResponse({ ok: true, state });
+      })
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    return true;
   }
 
-  void restoreBadgeFromState();
+  if (message?.type === SEARCH_CATALOG_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
 
-  void refreshWorkItems("manual")
-    .then((state) => {
-      sendResponse({ ok: true, state });
-    })
-    .catch((error) => {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
 
-  return true;
+        const searchText = typeof message.query === "string" ? message.query : "";
+        const items = await fetchAssignedWorkItemsForSearchQuery(config, searchText);
+        sendResponse({ ok: true, items });
+      } catch (error) {
+        logAdoError("searchCatalog", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  return undefined;
 });
 
 void bootstrap({ refresh: false, trigger: "service-worker-load" });
@@ -146,6 +177,7 @@ async function refreshWorkItems(trigger) {
           config,
           stateCategoriesByType,
           typeIconsByName,
+          {},
         ))
         .filter(Boolean),
     );
@@ -187,6 +219,44 @@ async function refreshWorkItems(trigger) {
     await saveState(nextState);
     return nextState;
   }
+}
+
+/**
+ * Поиск по WIQL на сервере (Contains + id), затем детали work item — вне iteration из настроек.
+ */
+async function fetchAssignedWorkItemsForSearchQuery(config, searchText) {
+  const ids = await queryAssignedWorkItemIdsForSearch(config, searchText);
+  const workItems = ids.length ? await fetchWorkItemsByIds(config, ids) : [];
+  const stateCategoriesByType = await resolveStateCategoriesByType(
+    config,
+    workItems.map((item) => item?.fields?.["System.WorkItemType"]),
+  );
+  const typeIconsByName = await resolveWorkItemTypeIcons(
+    config,
+    workItems.map((item) => item?.fields?.["System.WorkItemType"]),
+  );
+
+  const mapped = workItems
+    .map((workItem) => mapWorkItemToItem(
+      workItem,
+      config,
+      stateCategoriesByType,
+      typeIconsByName,
+      { includeClosed: true },
+    ))
+    .filter(Boolean);
+
+  mapped.sort((left, right) => {
+    const lt = Date.parse(left.createdAt ?? "") || 0;
+    const rt = Date.parse(right.createdAt ?? "") || 0;
+    if (rt !== lt) {
+      return rt - lt;
+    }
+
+    return Number(right.id) - Number(left.id);
+  });
+
+  return mapped;
 }
 
 async function getStoredState() {

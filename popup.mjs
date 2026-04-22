@@ -1,5 +1,6 @@
 const STORAGE_KEY = "wiState";
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
+const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const DEFAULT_FILTER = "all";
 const DEFAULT_STATE = {
   items: [],
@@ -17,6 +18,8 @@ const itemsList = document.querySelector("#items-list");
 const refreshButton = document.querySelector("#refresh-button");
 const optionsLink = document.querySelector("#options-link");
 const filterButtons = [...document.querySelectorAll("[data-filter]")];
+const searchInput = document.querySelector("#search-input");
+const searchClearButton = document.querySelector("#search-clear");
 const STATE_GROUP_ORDER = ["active", "proposed", "resolved"];
 const STATE_GROUP_LABELS = {
   active: "Active",
@@ -44,6 +47,15 @@ const WORK_ITEM_TYPE_ICONS = {
 let isRefreshing = false;
 let currentFilter = DEFAULT_FILTER;
 let currentState = { ...DEFAULT_STATE };
+/** Режим списка после поиска по Enter (по всем статусам). */
+let isSearchMode = false;
+/** Последний выполненный запрос (для повторного применения при обновлении данных). */
+let lastSearchQuery = "";
+let searchResultItems = [];
+/** Элементы каталога с Azure DevOps (все назначенные @Me, без iteration из настроек). */
+let searchBackendItems = [];
+let isSearchLoading = false;
+let searchFetchError = "";
 
 const fontReadyPromise = ensureLocalAdoFont();
 void init();
@@ -110,10 +122,27 @@ async function init() {
 
   for (const button of filterButtons) {
     button.addEventListener("click", () => {
+      exitSearchMode();
       currentFilter = button.dataset.filter || DEFAULT_FILTER;
       render();
     });
   }
+
+  searchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void runSearchFromInput();
+  });
+  searchInput?.addEventListener("input", () => {
+    updateSearchChrome();
+  });
+
+  searchClearButton?.addEventListener("click", () => {
+    clearSearchUi();
+    render();
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !changes[STORAGE_KEY]) {
@@ -125,6 +154,9 @@ async function init() {
       ...(changes[STORAGE_KEY].newValue ?? {}),
     };
     render();
+    if (isSearchMode && lastSearchQuery) {
+      void refetchSearchCatalog({ silent: true });
+    }
   });
 }
 
@@ -142,10 +174,14 @@ function render() {
 
   countBadge.classList.toggle("hidden", hasError);
   if (!hasError) {
-    countBadge.textContent = String(getFilteredItems().length);
+    countBadge.textContent = String(
+      isSearchMode ? searchResultItems.length : getFilteredItems().length,
+    );
   }
 
-  lastUpdated.textContent = `Последняя проверка: ${formatTimestamp(currentState.lastCheckedAt)}`;
+  updateSearchChrome();
+
+  lastUpdated.textContent = formatTimestamp(currentState.lastCheckedAt);
 
   refreshButton.disabled = isRefreshing;
   refreshButton.setAttribute(
@@ -171,16 +207,59 @@ function render() {
     button.setAttribute("aria-pressed", active ? "true" : "false");
   }
 
-  const items = getFilteredItems();
   itemsList.textContent = "";
+
+  if (isSearchMode) {
+    if (searchInput) {
+      searchInput.disabled = Boolean(isSearchLoading);
+    }
+
+    if (isSearchLoading) {
+      emptyState.classList.remove("hidden");
+      emptyState.classList.remove("popup__empty--error");
+      emptyState.textContent = "Загрузка с Azure DevOps…";
+      return;
+    }
+
+    if (searchFetchError) {
+      emptyState.classList.remove("hidden");
+      emptyState.classList.add("popup__empty--error");
+      emptyState.textContent = `Ошибка поиска: ${searchFetchError}`;
+      return;
+    }
+
+    if (!searchResultItems.length) {
+      emptyState.classList.remove("hidden");
+      emptyState.classList.add("popup__empty--error");
+      emptyState.textContent = getSearchEmptyMessage();
+      return;
+    }
+
+    emptyState.classList.add("hidden");
+    emptyState.classList.remove("popup__empty--error");
+
+    for (const item of searchResultItems) {
+      itemsList.append(createItemElement(item));
+    }
+
+    return;
+  }
+
+  if (searchInput) {
+    searchInput.disabled = false;
+  }
+
+  const items = getFilteredItems();
 
   if (!items.length) {
     emptyState.classList.remove("hidden");
+    emptyState.classList.remove("popup__empty--error");
     emptyState.textContent = getEmptyStateMessage();
     return;
   }
 
   emptyState.classList.add("hidden");
+  emptyState.classList.remove("popup__empty--error");
 
   for (const group of getGroupedItems(items)) {
     itemsList.append(createGroupElement(group));
@@ -209,6 +288,138 @@ function getEmptyStateMessage() {
   }
 
   return `Нет work items в категории ${currentFilter}`;
+}
+
+function getSearchEmptyMessage() {
+  const q = lastSearchQuery.trim();
+  return q
+    ? `Ошибка: по запросу «${q}» ничего не найдено (заголовок, описание, номер).`
+    : "Введите текст и нажмите Enter для поиска.";
+}
+
+function updateSearchChrome() {
+  const q = searchInput?.value?.trim() ?? "";
+  const showClear = Boolean(q || isSearchMode);
+  searchClearButton?.classList.toggle("hidden", !showClear);
+}
+
+function exitSearchMode() {
+  isSearchMode = false;
+  lastSearchQuery = "";
+  searchResultItems = [];
+  searchBackendItems = [];
+  isSearchLoading = false;
+  searchFetchError = "";
+}
+
+function clearSearchUi() {
+  exitSearchMode();
+  if (searchInput) {
+    searchInput.value = "";
+  }
+}
+
+function computeSearchMatches(rawQuery, sourceItems) {
+  const catalog = Array.isArray(sourceItems) ? sourceItems : [];
+  const base = catalog.filter((item) => normalizeTypeKey(item.type) !== "requirement");
+  const query = String(rawQuery ?? "").trim();
+  if (!query) {
+    return [];
+  }
+
+  const needle = query.toLowerCase();
+  const idNeedle = query.replace(/\s+/g, "");
+  const idNeedleNoHash = idNeedle.replace(/^#+/, "");
+
+  const matched = base.filter((item) => {
+    const title = String(item.title ?? "").toLowerCase();
+    const description = String(item.description ?? "").toLowerCase();
+    const idStr = String(item.id ?? "");
+
+    if (title.includes(needle) || description.includes(needle)) {
+      return true;
+    }
+
+    if (idNeedle && idStr.includes(idNeedle)) {
+      return true;
+    }
+
+    if (idNeedleNoHash && idStr.includes(idNeedleNoHash)) {
+      return true;
+    }
+
+    return idStr.toLowerCase().includes(needle);
+  });
+
+  return matched.sort(compareItemsByCreatedDesc);
+}
+
+function compareItemsByCreatedDesc(left, right) {
+  const delta = getCreatedTimestamp(right) - getCreatedTimestamp(left);
+
+  if (delta !== 0) {
+    return delta;
+  }
+
+  return Number(right.id || 0) - Number(left.id || 0);
+}
+
+function getCreatedTimestamp(item) {
+  return Date.parse(item.createdAt ?? "") || 0;
+}
+
+async function runSearchFromInput() {
+  const query = searchInput?.value?.trim() ?? "";
+
+  if (!query) {
+    clearSearchUi();
+    render();
+    return;
+  }
+
+  lastSearchQuery = query;
+  isSearchMode = true;
+  await refetchSearchCatalog({ silent: false });
+}
+
+async function refetchSearchCatalog(options = {}) {
+  const silent = Boolean(options.silent);
+
+  if (!isSearchMode || !lastSearchQuery.trim()) {
+    return;
+  }
+
+  if (!silent) {
+    isSearchLoading = true;
+    searchFetchError = "";
+    searchResultItems = [];
+    searchBackendItems = [];
+    render();
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: SEARCH_CATALOG_MESSAGE_TYPE,
+      query: lastSearchQuery.trim(),
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Не удалось загрузить данные для поиска.");
+    }
+
+    searchBackendItems = Array.isArray(response.items) ? response.items : [];
+    searchResultItems = computeSearchMatches(lastSearchQuery, searchBackendItems);
+    searchFetchError = "";
+  } catch (error) {
+    searchFetchError = error instanceof Error ? error.message : String(error);
+    searchBackendItems = [];
+    searchResultItems = [];
+  } finally {
+    if (!silent) {
+      isSearchLoading = false;
+    }
+    render();
+  }
 }
 
 function getGroupedItems(items) {
@@ -279,7 +490,11 @@ async function refreshNow() {
   } finally {
     isRefreshing = false;
     currentState = await loadState();
-    render();
+    if (isSearchMode && lastSearchQuery) {
+      await refetchSearchCatalog({ silent: true });
+    } else {
+      render();
+    }
   }
 }
 
@@ -344,7 +559,19 @@ function createLinkLabel(item) {
   const label = document.createElement("span");
   label.className = "popup__link-label";
   const title = item.title || "";
-  const html = title.replace(/\[([^\]]+)\]/g, '<span style="color: var(--soft);">$&</span>');
+  const leadingTagsMatch = title.match(/^((?:\[[^\]]+\]\s*)+)/);
+  let html = title;
+
+  if (leadingTagsMatch) {
+    const leadingTags = leadingTagsMatch[1];
+    const titleWithoutPrefix = title.slice(leadingTags.length).trimStart();
+    const highlightedTags = leadingTags
+      .replace(/\[([^\]]+)\]/g, '<span class="postfix">$&</span>')
+      .trim();
+
+    html = titleWithoutPrefix ? `${titleWithoutPrefix} ${highlightedTags}` : highlightedTags;
+  }
+
   label.innerHTML = html;
   return label;
 }
@@ -454,8 +681,38 @@ function formatTimestamp(timestamp) {
 
   const date = new Date(timestamp);
 
-  return new Intl.DateTimeFormat("ru-RU", {
-    dateStyle: "short",
-    timeStyle: "short",
+  if (Number.isNaN(date.getTime())) {
+    return "ещё не выполнялась";
+  }
+
+  const now = new Date();
+  const time = new Intl.DateTimeFormat("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
+
+  if (isSameLocalDay(date, now)) {
+    return time;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  if (isSameLocalDay(date, yesterday)) {
+    return `Вчера ${time}`;
+  }
+
+  const datePart = new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).format(date);
+
+  return `${datePart} ${time}`;
+}
+
+function isSameLocalDay(left, right) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
 }

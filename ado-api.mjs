@@ -218,8 +218,11 @@ export async function fetchConnectionIdentity(config) {
  * Используем макрос @Me из WIQL, чтобы сервер сам сопоставил identity.
  *
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {{ ignoreIterationPath?: boolean, includeClosed?: boolean }} [options]
  */
-export async function queryAssignedWorkItemIds(config) {
+export async function queryAssignedWorkItemIds(config, options = {}) {
+  const ignoreIterationPath = Boolean(options.ignoreIterationPath);
+  const includeClosed = Boolean(options.includeClosed);
   const project = encodeURIComponent(config.project.trim());
 
   const wiqlParts = [
@@ -227,10 +230,13 @@ export async function queryAssignedWorkItemIds(config) {
     "FROM WorkItems",
     `WHERE [System.TeamProject] = '${config.project.replace(/'/g, "''")}'`,
     "  AND [System.AssignedTo] = @Me",
-    "  AND [System.State] <> 'Closed'",
   ];
 
-  if (config.iterationPath?.trim()) {
+  if (!includeClosed) {
+    wiqlParts.push("  AND [System.State] <> 'Closed'");
+  }
+
+  if (!ignoreIterationPath && config.iterationPath?.trim()) {
     const pathForWiql = wiqlPathWithoutClassificationIteration(config.iterationPath);
     const cleanPath = pathForWiql.replace(/'/g, "''");
     wiqlParts.push(`  AND [System.IterationPath] = '${cleanPath}'`);
@@ -248,6 +254,62 @@ export async function queryAssignedWorkItemIds(config) {
   const requestUrl = `${normalizeApiRoot(config.apiRoot)}/${pathAndQuery}`;
   console.log("WIQL Request URL:", requestUrl);
   console.log("WIQL Query:", wiql);
+  const data = await adoFetch(config, pathAndQuery, {
+    method: "POST",
+    body: JSON.stringify({ query: wiql }),
+  });
+
+  const refs = Array.isArray(data?.workItems) ? data.workItems : [];
+  return refs
+    .map((item) => Number(item?.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+/**
+ * WIQL-поиск по назначенным @Me: без iteration из настроек, все состояния.
+ * Использует оператор Contains на сервере — находит work items вне «текущей выборки» в UI.
+ *
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} searchText
+ */
+export async function queryAssignedWorkItemIdsForSearch(config, searchText) {
+  const raw = String(searchText ?? "").trim().replace(/\r?\n/g, " ");
+  if (!raw) {
+    return [];
+  }
+
+  const esc = raw.replace(/'/g, "''");
+  const projectEsc = config.project.replace(/'/g, "''");
+  const idDigits = raw.replace(/^#/, "").trim();
+  const pureId = /^\d+$/.test(idDigits) ? Number(idDigits) : null;
+  const idLine = pureId !== null && Number.isInteger(pureId) && pureId > 0
+    ? `    OR [System.Id] = ${pureId}`
+    : "";
+
+  const wiqlParts = [
+    "SELECT [System.Id]",
+    "FROM WorkItems",
+    `WHERE [System.TeamProject] = '${projectEsc}'`,
+    "  AND [System.AssignedTo] = @Me",
+    "  AND (",
+    `    [System.Title] Contains '${esc}'`,
+    `    OR [System.Description] Contains '${esc}'`,
+  ];
+
+  if (idLine) {
+    wiqlParts.push(idLine);
+  }
+
+  wiqlParts.push("  )");
+  wiqlParts.push("ORDER BY [System.CreatedDate] DESC");
+
+  const wiql = wiqlParts.join("\n");
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+  const pathAndQuery = `${project}/_apis/wit/wiql?${query.toString()}`;
+
   const data = await adoFetch(config, pathAndQuery, {
     method: "POST",
     body: JSON.stringify({ query: wiql }),
@@ -421,7 +483,8 @@ async function fetchStateMapForType(config, type) {
   return map;
 }
 
-export function mapWorkItemToItem(workItem, config, stateCategoriesByType, typeIconsByName = new Map()) {
+export function mapWorkItemToItem(workItem, config, stateCategoriesByType, typeIconsByName = new Map(), mapOptions = {}) {
+  const includeClosed = Boolean(mapOptions.includeClosed);
   const fields = workItem?.fields ?? {};
   const id = Number(workItem?.id);
   const type = normalizeText(fields["System.WorkItemType"]);
@@ -435,7 +498,7 @@ export function mapWorkItemToItem(workItem, config, stateCategoriesByType, typeI
   const category = resolveWorkItemStateCategory(type, state, stateCategoriesByType);
   const typeIcon = typeIconsByName.get(type) ?? null;
 
-  if (category === "closed") {
+  if (category === "closed" && !includeClosed) {
     return null;
   }
 
