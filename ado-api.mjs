@@ -370,6 +370,77 @@ export async function fetchWorkItemsByIds(config, ids) {
 
 /**
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} type
+ */
+export async function fetchWorkItemTypeStates(config, type) {
+  const normalizedType = normalizeText(type);
+
+  if (!normalizedType) {
+    return [];
+  }
+
+  const project = encodeURIComponent(config.project.trim());
+  const typeSeg = encodeURIComponent(normalizedType);
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+  const data = await adoFetch(
+    config,
+    `${project}/_apis/wit/workitemtypes/${typeSeg}/states?${query.toString()}`,
+  );
+  const states = Array.isArray(data?.value) ? data.value : [];
+
+  return states
+    .map((entry) => ({
+      name: normalizeText(entry?.name),
+      category: normalizeStateCategory(entry?.category),
+    }))
+    .filter((entry) => Boolean(entry.name));
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {number|string} workItemId
+ * @param {string} nextState
+ */
+export async function updateWorkItemState(config, workItemId, nextState) {
+  const id = Number(workItemId);
+  const state = normalizeText(nextState);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("Некорректный id work item для изменения статуса.");
+  }
+
+  if (!state) {
+    throw new Error("Не указан новый статус work item.");
+  }
+
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+
+  await adoFetch(
+    config,
+    `${project}/_apis/wit/workitems/${id}?${query.toString()}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+      },
+      body: JSON.stringify([
+        {
+          op: "add",
+          path: "/fields/System.State",
+          value: state,
+        },
+      ]),
+    },
+  );
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
  * @param {string[]} types
  */
 export async function resolveStateCategoriesByType(config, types) {

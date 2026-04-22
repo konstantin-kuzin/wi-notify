@@ -5,6 +5,7 @@ import {
 } from "./ado-config.mjs";
 import {
   fetchConnectionIdentity,
+  fetchWorkItemTypeStates,
   fetchWorkItemsByIds,
   logAdoError,
   mapWorkItemToItem,
@@ -13,12 +14,15 @@ import {
   resolveStateCategoriesByType,
   resolveWorkItemTypeIcons,
   sortWorkItemsNewestFirst,
+  updateWorkItemState,
 } from "./ado-api.mjs";
 
 const ALARM_NAME = "refresh-work-items";
 const CHECK_INTERVAL_MINUTES = 10;
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
 const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
+const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
+const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const STORAGE_KEY = "wiState";
 
 const DEFAULT_STATE = {
@@ -103,8 +107,128 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === GET_STATE_OPTIONS_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const workItemType = typeof message.workItemType === "string"
+          ? message.workItemType
+          : "";
+        const states = await fetchWorkItemTypeStates(config, workItemType);
+        sendResponse({ ok: true, states });
+      } catch (error) {
+        logAdoError("getStatusOptions", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.type === UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const workItemId = Number(message.workItemId);
+        const nextState = typeof message.nextState === "string" ? message.nextState : "";
+        const workItemType = typeof message.workItemType === "string" ? message.workItemType : "";
+
+        await updateWorkItemState(config, workItemId, nextState);
+
+        const stateOptions = await fetchWorkItemTypeStates(config, workItemType);
+        const matched = stateOptions.find(
+          (stateOption) => stateOption.name.toLowerCase() === nextState.trim().toLowerCase(),
+        );
+        const nextCategory = matched?.category || inferStateCategoryFromName(nextState);
+
+        const previousState = await getStoredState();
+        const nextItems = Array.isArray(previousState.items)
+          ? previousState.items.map((item) => {
+            if (String(item.id) !== String(workItemId)) {
+              return item;
+            }
+
+            return {
+              ...item,
+              state: nextState.trim(),
+              stateCategory: nextCategory || item.stateCategory || "active",
+              updatedAt: new Date().toISOString(),
+            };
+          })
+          : [];
+        const nextStorageState = {
+          ...previousState,
+          items: nextItems,
+          count: nextItems.length,
+        };
+
+        await saveState(nextStorageState);
+        sendResponse({
+          ok: true,
+          workItemId: String(workItemId),
+          nextState: nextState.trim(),
+          nextCategory,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        logAdoError("updateWorkItemStatus", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
   return undefined;
 });
+
+function inferStateCategoryFromName(state) {
+  const normalized = String(state ?? "").toLowerCase();
+
+  if (!normalized) {
+    return "active";
+  }
+
+  if (/(closed|done|completed|complete|removed)/i.test(normalized)) {
+    return "closed";
+  }
+
+  if (/(resolved|ready for testing|fixed)/i.test(normalized)) {
+    return "resolved";
+  }
+
+  if (/(new|proposed|approved|triaged)/i.test(normalized)) {
+    return "proposed";
+  }
+
+  return "active";
+}
 
 void bootstrap({ refresh: false, trigger: "service-worker-load" });
 
