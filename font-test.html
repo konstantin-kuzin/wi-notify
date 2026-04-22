@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Font Test</title>
+    <style>
+      @font-face {
+        font-family: "Bowtie";
+        src: url("./icons/AzDevMDL2.woff") format("woff");
+      }
+
+      body {
+        font-family: sans-serif;
+        padding: 24px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 16px;
+        font-size: 32px;
+      }
+
+      .icon {
+        font-family: "Bowtie";
+        line-height: 1;
+        color: #c800a1;
+      }
+
+      .task {
+        color: #ffcc00;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row"><span class="icon">&#xeac4;</span><span>review eac4</span></div>
+    <div class="row"><span class="icon task">&#xeabf;</span><span>task eabf</span></div>
+  </body>
+</html>

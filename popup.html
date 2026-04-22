@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Work Items</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header class="popup__header">
+        <div class="popup__header-main">
+          <h1 class="popup__title">My Work Items</h1>
+          <p class="popup__last-updated" id="last-updated">Последняя проверка: ещё не выполнялась</p>
+        </div>
+        <div class="popup__header-status">
+          <button
+            class="popup__refresh"
+            id="refresh-button"
+            type="button"
+            aria-label="Обновить сейчас"
+            title="Обновить сейчас"
+          ></button>
+          <div class="popup__count" id="count-badge">0</div>
+        </div>
+      </header>
+
+      <section class="popup__message hidden" id="message-box"></section>
+
+      <section class="popup__filters" aria-label="Фильтр work items">
+        <button type="button" class="popup__filter-button popup__filter-button--active" data-filter="all">Все</button>
+        <button type="button" class="popup__filter-button" data-filter="active">Active</button>
+        <button type="button" class="popup__filter-button" data-filter="proposed">Proposed</button>
+        <button type="button" class="popup__filter-button" data-filter="resolved">Resolved</button>
+      </section>
+
+      <section class="popup__content">
+        <div class="popup__empty hidden" id="empty-state">Нет активных work items</div>
+        <ul class="popup__list" id="items-list"></ul>
+      </section>
+
+      <footer class="popup__footer">
+        <a
+          class="popup__github-link"
+          href="https://github.com/konstantin-kuzin/pr-notify"
+          target="_blank"
+          rel="noopener noreferrer"
+        >GitHub</a>
+        <button type="button" class="popup__options-link" id="options-link">Настройки</button>
+      </footer>
+    </main>
+
+    <script type="module" src="popup.mjs"></script>
+  </body>
+</html>
