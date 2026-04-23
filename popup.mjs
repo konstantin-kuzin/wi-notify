@@ -3,6 +3,7 @@ const REFRESH_MESSAGE_TYPE = "manual-refresh";
 const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
 const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
+const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
 const DEFAULT_FILTER = "all";
 const DEFAULT_STATE = {
   items: [],
@@ -15,6 +16,7 @@ const DEFAULT_STATE = {
 const countBadge = document.querySelector("#count-badge");
 const lastUpdated = document.querySelector("#last-updated");
 const messageBox = document.querySelector("#message-box");
+const timesheetStatusBox = document.querySelector("#timesheet-status");
 const emptyState = document.querySelector("#empty-state");
 const itemsList = document.querySelector("#items-list");
 const refreshButton = document.querySelector("#refresh-button");
@@ -58,8 +60,6 @@ let searchResultItems = [];
 let searchBackendItems = [];
 let isSearchLoading = false;
 let searchFetchError = "";
-let statusNoticeMessage = "";
-let statusNoticeTimerId = null;
 let statusMenuState = {
   isOpen: false,
   isLoading: false,
@@ -70,6 +70,19 @@ let statusMenuState = {
   currentState: "",
   options: [],
 };
+let effortMenuState = {
+  isOpen: false,
+  anchorRect: null,
+  itemId: "",
+  isLoading: false,
+};
+let timesheetNoticeState = {
+  tone: "",
+  message: "",
+  isLoading: false,
+  timerId: null,
+};
+const EFFORT_HOURS_OPTIONS = Array.from({ length: 16 }, (_item, index) => (index + 1) * 0.5);
 
 const fontReadyPromise = ensureLocalAdoFont();
 void init();
@@ -133,7 +146,7 @@ async function init() {
     void chrome.runtime.openOptionsPage();
   });
   window.addEventListener("resize", applyPopupMaxHeight);
-  document.addEventListener("click", handleDocumentClickForStatusMenu);
+  document.addEventListener("click", handleDocumentClickForMenus);
 
   for (const button of filterButtons) {
     button.addEventListener("click", () => {
@@ -213,11 +226,6 @@ function render() {
     messageBox.classList.add("popup__message--error");
     messageBox.classList.remove("popup__message--success");
     messageBox.classList.remove("hidden");
-  } else if (statusNoticeMessage) {
-    messageBox.textContent = statusNoticeMessage;
-    messageBox.classList.remove("popup__message--error");
-    messageBox.classList.add("popup__message--success");
-    messageBox.classList.remove("hidden");
   } else {
     messageBox.textContent = "";
     messageBox.classList.remove("popup__message--error");
@@ -230,6 +238,8 @@ function render() {
     button.classList.toggle("popup__filter-button--active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
   }
+
+  renderTimesheetNotice();
 
   itemsList.textContent = "";
 
@@ -565,9 +575,24 @@ function createItemElement(item) {
     window.close();
   });
 
-  listItem.append(link);
+  listItem.append(link, createTimesheetAddButton(item));
 
   return listItem;
+}
+
+function createTimesheetAddButton(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "popup__timesheet-add";
+  button.textContent = "+";
+  button.setAttribute("aria-label", `Добавить #${item.id} в TimeSheet`);
+  button.title = "Добавить время в TimeSheet";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openEffortMenu(item, button);
+  });
+  return button;
 }
 
 function createLinkRow(item) {
@@ -621,21 +646,19 @@ function createStateBadge(item) {
   return stateBadge;
 }
 
-function handleDocumentClickForStatusMenu(event) {
-  if (!statusMenuState.isOpen) {
-    return;
-  }
-
+function handleDocumentClickForMenus(event) {
   const target = event.target;
   if (!(target instanceof Element)) {
     return;
   }
 
-  if (target.closest(".popup__status-menu")) {
-    return;
+  if (statusMenuState.isOpen && !target.closest(".popup__status-menu")) {
+    closeStatusMenu();
   }
 
-  closeStatusMenu();
+  if (effortMenuState.isOpen && !target.closest(".popup__effort-menu")) {
+    closeEffortMenu();
+  }
 }
 
 async function openStatusMenu(item, anchorElement) {
@@ -755,6 +778,186 @@ function renderStatusMenu() {
   document.body.append(menu);
 }
 
+function openEffortMenu(item, anchorElement) {
+  closeStatusMenu();
+  effortMenuState = {
+    isOpen: true,
+    anchorRect: anchorElement.getBoundingClientRect(),
+    itemId: String(item.id),
+    isLoading: false,
+  };
+  renderEffortMenu();
+}
+
+function closeEffortMenu() {
+  effortMenuState = {
+    isOpen: false,
+    anchorRect: null,
+    itemId: "",
+    isLoading: false,
+  };
+  renderEffortMenu();
+}
+
+function renderEffortMenu() {
+  const existing = document.querySelector(".popup__effort-menu");
+  existing?.remove();
+
+  if (!effortMenuState.isOpen || !effortMenuState.anchorRect) {
+    return;
+  }
+
+  const menu = document.createElement("div");
+  menu.className = "popup__effort-menu";
+  const top = Math.min(window.innerHeight - 220, effortMenuState.anchorRect.bottom + 6);
+  const left = Math.min(window.innerWidth - 220, Math.max(8, effortMenuState.anchorRect.left - 182));
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${Math.max(8, left)}px`;
+
+  if (effortMenuState.isLoading) {
+    const loading = document.createElement("div");
+    loading.className = "popup__status-menu-message";
+    loading.textContent = "Списание в TimeSheet...";
+    menu.append(loading);
+    document.body.append(menu);
+    return;
+  }
+
+  const title = document.createElement("div");
+  title.className = "popup__effort-menu-title";
+  title.textContent = "Добавить Time в Sheet";
+  menu.append(title);
+
+  for (const hours of EFFORT_HOURS_OPTIONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "popup__effort-option";
+    button.textContent = formatHoursLabel(hours);
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await addItemToTimesheet(hours);
+    });
+    menu.append(button);
+  }
+
+  const timesheetLink = document.createElement("a");
+  timesheetLink.className = "popup__effort-menu-link";
+  timesheetLink.href = "https://hqrndtfsts.avp.ru/TimeSheet/";
+  timesheetLink.target = "_blank";
+  timesheetLink.rel = "noopener noreferrer";
+  timesheetLink.textContent = "Перейти в TimeSheet";
+  menu.append(timesheetLink);
+
+  document.body.append(menu);
+}
+
+function formatHoursLabel(hours) {
+  const value = Number(hours);
+  if (Number.isInteger(value)) {
+    return `${value} ч`;
+  }
+  return `${value.toFixed(1).replace(".", ",")}`;
+}
+
+async function addItemToTimesheet(hours) {
+  if (!effortMenuState.itemId) {
+    closeEffortMenu();
+    return;
+  }
+
+  const targetItemId = effortMenuState.itemId;
+  closeEffortMenu();
+  setTimesheetNotice({
+    tone: "info",
+    message: "Списание в TimeSheet...",
+    isLoading: true,
+  });
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: ADD_TO_TIMESHEET_MESSAGE_TYPE,
+      workItemId: targetItemId,
+      hours,
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Не удалось добавить запись в TimeSheet.");
+    }
+
+    setTimesheetNotice({
+      tone: "success",
+      message: `Добавлено в TimeSheet: ${formatHoursLabel(hours)}`,
+      isLoading: false,
+      autoHideMs: 4500,
+    });
+  } catch (error) {
+    setTimesheetNotice({
+      tone: "error",
+      message: `Ошибка TimeSheet: ${error instanceof Error ? error.message : String(error)}`,
+      isLoading: false,
+      autoHideMs: 6500,
+    });
+  }
+}
+
+function setTimesheetNotice(options) {
+  if (timesheetNoticeState.timerId) {
+    clearTimeout(timesheetNoticeState.timerId);
+  }
+
+  timesheetNoticeState = {
+    tone: String(options.tone ?? "info"),
+    message: String(options.message ?? ""),
+    isLoading: Boolean(options.isLoading),
+    timerId: null,
+  };
+
+  if (Number(options.autoHideMs) > 0) {
+    timesheetNoticeState.timerId = window.setTimeout(() => {
+      timesheetNoticeState = {
+        tone: "",
+        message: "",
+        isLoading: false,
+        timerId: null,
+      };
+      render();
+    }, Number(options.autoHideMs));
+  }
+
+  render();
+}
+
+function renderTimesheetNotice() {
+  if (!timesheetStatusBox) {
+    return;
+  }
+
+  const hasMessage = Boolean(timesheetNoticeState.message);
+  timesheetStatusBox.textContent = "";
+  timesheetStatusBox.className = "popup__timesheet-notice hidden";
+
+  if (!hasMessage) {
+    return;
+  }
+
+  const tone = timesheetNoticeState.tone || "info";
+  timesheetStatusBox.classList.remove("hidden");
+  timesheetStatusBox.classList.add(`popup__timesheet-notice--${tone}`);
+
+  if (timesheetNoticeState.isLoading) {
+    const loader = document.createElement("span");
+    loader.className = "popup__timesheet-notice-loader";
+    loader.setAttribute("aria-hidden", "true");
+    timesheetStatusBox.append(loader);
+  }
+
+  const text = document.createElement("span");
+  text.className = "popup__timesheet-notice-text";
+  text.textContent = timesheetNoticeState.message;
+  timesheetStatusBox.append(text);
+}
+
 async function applyWorkItemStateChange(nextState) {
   if (!statusMenuState.itemId) {
     closeStatusMenu();
@@ -779,10 +982,21 @@ async function applyWorkItemStateChange(nextState) {
       String(response.nextCategory || ""),
       String(response.updatedAt || new Date().toISOString()),
     );
-    showStatusNotice(`Статус обновлен: ${response.nextState || nextState}`);
+    setTimesheetNotice({
+      tone: "success",
+      message: `Статус изменен на ${response.nextState || nextState}`,
+      isLoading: false,
+      autoHideMs: 4500,
+    });
     closeStatusMenu();
     render();
   } catch (error) {
+    setTimesheetNotice({
+      tone: "error",
+      message: `Ошибка обновления статуса: ${error instanceof Error ? error.message : String(error)}`,
+      isLoading: false,
+      autoHideMs: 6500,
+    });
     statusMenuState = {
       ...statusMenuState,
       error: error instanceof Error ? error.message : String(error),
@@ -816,20 +1030,6 @@ function patchItemState(itemId, nextState, nextCategory, updatedAt) {
   };
   searchResultItems = applyPatchToList(searchResultItems);
   searchBackendItems = applyPatchToList(searchBackendItems);
-}
-
-function showStatusNotice(message) {
-  statusNoticeMessage = message;
-
-  if (statusNoticeTimerId) {
-    clearTimeout(statusNoticeTimerId);
-  }
-
-  statusNoticeTimerId = window.setTimeout(() => {
-    statusNoticeMessage = "";
-    statusNoticeTimerId = null;
-    render();
-  }, 5000);
 }
 
 function createAgeBadge(item) {

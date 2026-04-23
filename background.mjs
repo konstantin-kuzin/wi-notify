@@ -16,6 +16,7 @@ import {
   sortWorkItemsNewestFirst,
   updateWorkItemState,
 } from "./ado-api.mjs";
+import { addWorkItemEffortToCurrentWeek } from "./timesheet-api.mjs";
 
 const ALARM_NAME = "refresh-work-items";
 const CHECK_INTERVAL_MINUTES = 10;
@@ -23,6 +24,7 @@ const REFRESH_MESSAGE_TYPE = "manual-refresh";
 const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
 const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
+const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
 const STORAGE_KEY = "wiState";
 
 const DEFAULT_STATE = {
@@ -195,6 +197,47 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
       } catch (error) {
         logAdoError("updateWorkItemStatus", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.type === ADD_TO_TIMESHEET_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const identity = await fetchConnectionIdentity(config);
+        const login = String(identity.uniqueName ?? "").trim();
+        const workItemId = Number(message.workItemId);
+        const hours = Number(message.hours);
+
+        const result = await addWorkItemEffortToCurrentWeek({
+          login,
+          workItemId,
+          hours,
+        });
+
+        sendResponse({
+          ok: true,
+          ...result,
+        });
+      } catch (error) {
+        logAdoError("addToTimesheet", error);
         sendResponse({
           ok: false,
           error: error instanceof Error ? error.message : String(error),
