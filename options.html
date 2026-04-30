@@ -28,7 +28,7 @@
         <label class="options__field">
           <span class="options__label">Проект</span>
           <input class="options__input" id="project" name="project" type="text" required>
-          <span class="options__hint">Например, Monorepo</span>
+          <span class="options__hint">Например, B2B Design System</span>
         </label>
 
         <label class="options__field">
@@ -36,12 +36,22 @@
           <select class="options__input" id="iteration-path" name="iterationPath">
             <option value="">All</option>
           </select>
-          <span class="options__hint">Filter work items by iteration. "All" shows all iterations.</span>
+          <span class="options__hint">Фильтер по итерациям. "All" - выбрать все итерации.</span>
         </label>
 
-
-
-
+        <label class="options__field">
+          <span class="options__label">Период обновления, мин.</span>
+          <input
+            class="options__input"
+            id="refresh-interval-minutes"
+            name="refreshIntervalMinutes"
+            type="number"
+            min="1"
+            step="1"
+            required
+          >
+          <span class="options__hint">По умолчанию: 10 минут.</span>
+        </label>
 
          <div class="options__actions">
            <button class="options__button" type="button" id="save-button">Сохранить</button>

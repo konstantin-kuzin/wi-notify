@@ -1,6 +1,7 @@
 import {
   ADO_CONFIG_KEY,
   loadAdoConfig,
+  resolveRefreshIntervalMinutes,
   validateAdoConfig,
 } from "./ado-config.mjs";
 import {
@@ -19,7 +20,6 @@ import {
 import { addWorkItemEffortToCurrentWeek } from "./timesheet-api.mjs";
 
 const ALARM_NAME = "refresh-work-items";
-const CHECK_INTERVAL_MINUTES = 10;
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
 const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
@@ -59,6 +59,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     return;
   }
 
+  void ensureAlarm();
   void refreshWorkItems("config-change");
 });
 
@@ -292,14 +293,16 @@ async function bootstrap({ refresh, trigger }) {
 }
 
 async function ensureAlarm() {
+  const config = await loadAdoConfig();
+  const periodInMinutes = resolveRefreshIntervalMinutes(config);
   const alarm = await chrome.alarms.get(ALARM_NAME);
 
-  if (alarm) {
+  if (alarm?.periodInMinutes === periodInMinutes) {
     return;
   }
 
   await chrome.alarms.create(ALARM_NAME, {
-    periodInMinutes: CHECK_INTERVAL_MINUTES,
+    periodInMinutes,
   });
 }
 

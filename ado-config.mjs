@@ -5,6 +5,7 @@ export const DEFAULT_ADO_CONFIG = {
   apiRoot: "https://hqrndtfs.avp.ru/tfs/DefaultCollection",
   project: "Monorepo",
   iterationPath: "",
+  refreshIntervalMinutes: 10,
   /**
    * Версия REST API (`api-version` в запросах). На странице настроек не показывается —
    * меняйте здесь (или вручную в `chrome.storage.local` → `adoConfig`), если серверу нужна
@@ -26,6 +27,7 @@ export async function loadAdoConfig() {
   console.log('Partial config:', partial);
   const raw = { ...DEFAULT_ADO_CONFIG, ...partial };
   raw.apiVersion = '6.0-preview';
+  raw.refreshIntervalMinutes = resolveRefreshIntervalMinutes(raw);
 
   // Remove deprecated fields
   delete raw.repositoryId;
@@ -53,7 +55,10 @@ export function validateAdoConfig(config) {
     errors.push("Укажите проект.");
   }
 
-  const ver = resolveApiVersion(config);
+  if (!Number.isInteger(Number(config.refreshIntervalMinutes))
+    || Number(config.refreshIntervalMinutes) < 1) {
+    errors.push("Укажите период обновления в минутах целым числом не меньше 1.");
+  }
 
   return errors;
 }
@@ -61,6 +66,16 @@ export function validateAdoConfig(config) {
 export function resolveApiVersion(config) {
   const raw = config?.apiVersion ?? DEFAULT_ADO_CONFIG.apiVersion;
   return String(raw ?? "").trim() || DEFAULT_ADO_CONFIG.apiVersion;
+}
+
+export function resolveRefreshIntervalMinutes(config) {
+  const raw = Number(config?.refreshIntervalMinutes);
+
+  if (Number.isInteger(raw) && raw >= 1) {
+    return raw;
+  }
+
+  return DEFAULT_ADO_CONFIG.refreshIntervalMinutes;
 }
 
 function isPlausibleApiVersion(ver) {

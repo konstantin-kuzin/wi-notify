@@ -8,6 +8,7 @@ const form = document.querySelector("#options-form");
 const apiRootInput = document.querySelector("#api-root");
 const projectInput = document.querySelector("#project");
 const iterationPathSelect = document.querySelector("#iteration-path");
+const refreshIntervalMinutesInput = document.querySelector("#refresh-interval-minutes");
 const saveButton = document.querySelector("#save-button");
 const saveStatus = document.querySelector("#save-status");
 
@@ -17,6 +18,9 @@ async function init() {
   const config = await loadAdoConfig();
   apiRootInput.value = config.apiRoot ?? DEFAULT_ADO_CONFIG.apiRoot;
   projectInput.value = config.project ?? DEFAULT_ADO_CONFIG.project;
+  refreshIntervalMinutesInput.value = String(
+    config.refreshIntervalMinutes ?? DEFAULT_ADO_CONFIG.refreshIntervalMinutes,
+  );
 
   saveButton.addEventListener("click", () => {
     void handleSubmit();
@@ -46,6 +50,7 @@ async function buildConfigForApi() {
     apiRoot: apiRootInput.value.trim(),
     project: projectInput.value.trim(),
     iterationPath: iterationPathSelect.value.trim(),
+    refreshIntervalMinutes: getRefreshIntervalMinutesValue(),
   };
 }
 
@@ -61,6 +66,7 @@ async function handleSubmit() {
     apiRoot: apiRootInput.value.trim(),
     project: projectInput.value.trim(),
     iterationPath: iterationPathSelect.value.trim(),
+    refreshIntervalMinutes: getRefreshIntervalMinutesValue(),
   };
 
   const errors = validateAdoConfig(merged);
@@ -90,6 +96,7 @@ async function handleSubmit() {
   console.log('Loaded config after save:', savedConfig);
   apiRootInput.value = savedConfig.apiRoot;
   projectInput.value = savedConfig.project;
+  refreshIntervalMinutesInput.value = String(savedConfig.refreshIntervalMinutes);
   await fetchAndPopulateIterations(savedConfig.iterationPath ?? "");
   console.log('Form values set to:', apiRootInput.value, projectInput.value, iterationPathSelect.value);
 
@@ -180,4 +187,8 @@ function flattenIterations(nodes, result = []) {
     }
   }
   return result;
+}
+
+function getRefreshIntervalMinutesValue() {
+  return Number.parseInt(refreshIntervalMinutesInput.value, 10);
 }
