@@ -132,6 +132,50 @@
 - После успеха popup локально патчит элемент списка, обновляет `state`, `stateCategory`, `updatedAt` и показывает notice об успешном изменении.
 - При ошибке меню остаётся открытым с текстом ошибки, а в popup показывается notice `Ошибка обновления статуса`.
 
+## Комментарии Work Item
+
+Реализация распределена между [`popup.mjs`](../popup.mjs), [`background.mjs`](../background.mjs), [`ado-api.mjs`](../ado-api.mjs) и стилями [`popup.css`](../popup.css).
+
+### UI в popup
+
+- Каждая карточка Work Item получает кнопку `popup__comment-icon` со счётчиком `popup__comment-badge`.
+- Начальное значение счётчика берётся из локального кэша `commentCountsByItem`; если данных ещё нет, отображается `0`.
+- При старте popup вызывается `bootstrapCommentCounts()`, который отправляет `get-comments` для видимых элементов и обновляет счётчики.
+- После поиска по всем назначенным задачам `refetchSearchCatalog()` отдельно вызывает `bootstrapCommentCounts(searchResultItems)`, чтобы найденные через поиск WI получили актуальные счётчики комментариев.
+- При клике на кнопку комментариев открывается блок `popup__comment-input` сразу под карточкой:
+  - пока идёт запрос, показывается `Загрузка комментариев...`;
+  - если комментариев нет, показывается `Нет комментариев`;
+  - при ошибке показывается текст ошибки;
+  - при успехе рендерится список комментариев и форма добавления нового комментария.
+- После успешной загрузки или добавления комментария `updateCommentBadge(itemId, count)` обновляет текст бейджа и класс `popup__comment-badge--empty`.
+- Комментарий отображается с автором, временем создания, аватаром или fallback-инициалами. Если текст уже содержит HTML-теги, он вставляется как HTML; иначе переводы строк заменяются на `<br>`.
+
+### Сообщения popup/background
+
+| Сообщение | Откуда | Что делает |
+|-----------|--------|------------|
+| `get-comments` | `popup.mjs` -> `background.mjs` | Загружает комментарии Work Item и возвращает `{ ok, workItemId, comments }` |
+| `add-comment` | `popup.mjs` -> `background.mjs` | Добавляет комментарий, затем перечитывает комментарии и возвращает обновлённый список |
+
+Перед выполнением обоих действий background загружает `adoConfig` и прогоняет `validateAdoConfig`. Ошибки валидации или API возвращаются в popup как `{ ok: false, error }`.
+
+### Azure DevOps API
+
+- Чтение выполняет [`fetchWorkItemComments`](../ado-api.mjs):
+  - проверяет корректность `workItemId`;
+  - вызывает `GET {project}/_apis/wit/workItems/{id}/comments?api-version=...`;
+  - поддерживает ответы с массивом в `value` или `comments`;
+  - нормализует `id`, автора, avatar URL, дату и текст;
+  - сортирует комментарии от новых к старым;
+  - при `404` возвращает пустой список.
+- Добавление выполняет [`createWorkItemComment`](../ado-api.mjs):
+  - проверяет `workItemId` и непустой текст;
+  - заменяет `\n` на `<br>`;
+  - для совместимости со старым Azure DevOps Server пишет комментарий через `PATCH {project}/_apis/wit/workitems/{id}` в поле `/fields/System.History`;
+  - после PATCH background снова вызывает `fetchWorkItemComments`, чтобы вернуть popup актуальный список.
+
+Практический нюанс: на части on-prem Azure DevOps/TFS UI показывает Discussion/History как комментарии, но endpoint `workItems/{id}/comments` может возвращать только данные нового comments API. Поэтому при диагностике расхождения между UI ADO и счётчиком в popup нужно проверять, где именно хранится запись: в comments API или в `System.History`.
+
 ## Списание времени в TimeSheet
 
 - На карточке Work Item доступно действие списания времени, которое открывает меню `popup__effort-menu`.
@@ -165,10 +209,10 @@
 |------|------|
 | `manifest.json` | MV3, права, иконки, entrypoints |
 | `background.mjs` | Алармы, storage, badge, уведомления, оркестрация API |
-| `ado-api.mjs` | Запросы ADO, фильтры, маппинг, approve, identities/groups |
+| `ado-api.mjs` | Запросы ADO, фильтры, маппинг, комментарии, approve, identities/groups |
 | `ado-config.mjs` | Дефолты и нормализация `adoConfig` |
 | `options.html` / `options.css` / `options.mjs` | UI настроек |
-| `popup.html` / `popup.css` / `popup.mjs` | UI списка |
+| `popup.html` / `popup.css` / `popup.mjs` | UI списка, статусов, комментариев и TimeSheet-действий |
 | `icons/*` | Иконки; `icon-*-error.png` при ошибке badge |
 
 ## Ограничения (as is)

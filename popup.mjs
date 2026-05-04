@@ -4,6 +4,8 @@ const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
 const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
+const GET_COMMENTS_MESSAGE_TYPE = "get-comments";
+const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
 const DEFAULT_FILTER = "all";
 const DEFAULT_STATE = {
   items: [],
@@ -76,6 +78,16 @@ let effortMenuState = {
   itemId: "",
   isLoading: false,
 };
+let commentInputState = {
+  isOpen: false,
+  isLoading: false,
+  error: "",
+  anchorRect: null,
+  itemId: "",
+  commentCount: 0,
+  comments: [],
+};
+let commentCountsByItem = new Map();
 let timesheetNoticeState = {
   tone: "",
   message: "",
@@ -138,6 +150,7 @@ async function init() {
   applyPopupMaxHeight();
   currentState = await loadState();
   render();
+  void bootstrapCommentCounts();
 
   refreshButton.addEventListener("click", () => {
     void refreshNow();
@@ -195,6 +208,30 @@ async function loadState() {
     ...DEFAULT_STATE,
     ...(stored[STORAGE_KEY] ?? {}),
   };
+}
+
+async function bootstrapCommentCounts(items = null) {
+  const targetItems = Array.isArray(items)
+    ? items
+    : isSearchMode ? searchResultItems : getFilteredItems();
+  await Promise.all(
+    targetItems.map(async (item) => {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: GET_COMMENTS_MESSAGE_TYPE,
+          workItemId: item.id,
+        });
+        if (response?.ok) {
+          const count = response.comments?.length ?? 0;
+          commentCountsByItem.set(item.id, count);
+          updateCommentBadge(item.id, count);
+        }
+      } catch (_err) {
+        // ignore
+      }
+    }),
+  );
+  render();
 }
 
 function render() {
@@ -460,6 +497,9 @@ async function refetchSearchCatalog(options = {}) {
       isSearchLoading = false;
     }
     render();
+    if (!searchFetchError && searchResultItems.length) {
+      void bootstrapCommentCounts(searchResultItems);
+    }
   }
 }
 
@@ -565,6 +605,7 @@ function createGroupElement(group) {
 function createItemElement(item) {
   const listItem = document.createElement("li");
   listItem.className = "popup__item";
+  listItem.dataset.itemId = item.id;
 
   const link = document.createElement("button");
   link.className = "popup__link";
@@ -575,9 +616,61 @@ function createItemElement(item) {
     window.close();
   });
 
-  listItem.append(link, createTimesheetAddButton(item));
+  const commentCount = (item.comments?.length) || commentCountsByItem.get(item.id) || 0;
+  listItem.append(link, createCommentButton(item, commentCount), createTimesheetAddButton(item));
 
   return listItem;
+}
+
+function createCommentButton(item, commentCount) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "popup__comment-icon";
+  button.dataset.itemId = item.id;
+  button.setAttribute("aria-label", `Комментарии #${item.id}`);
+  button.title = "Комментарии";
+
+  const icon = document.createElement("span");
+  icon.className = "popup__comment-icon-inner";
+  icon.setAttribute("aria-hidden", "true");
+  icon.style.fontFamily = '"Bowtie", "bowtie"';
+  icon.style.fontSize = "16px";
+  icon.style.lineHeight = "1";
+  icon.style.display = "inline-block";
+  icon.textContent = "\ue82d";
+
+  const countSpan = document.createElement("span");
+  countSpan.className = `popup__comment-badge ${commentCount === 0 ? "popup__comment-badge--empty" : ""}`;
+  countSpan.textContent = String(commentCount ?? 0);
+  countSpan.dataset.itemId = item.id;
+
+  button.append(icon, countSpan);
+
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (commentInputState.itemId === item.id && commentInputState.isOpen) {
+      closeCommentInput();
+    } else {
+      void openCommentInput(item, button);
+    }
+  });
+
+  return button;
+}
+
+function updateCommentBadge(itemId, commentCount) {
+  const id = String(itemId);
+  const count = Number(commentCount) || 0;
+
+  for (const badge of document.querySelectorAll(".popup__comment-badge")) {
+    if (badge.dataset.itemId !== id) {
+      continue;
+    }
+
+    badge.textContent = String(count);
+    badge.classList.toggle("popup__comment-badge--empty", count === 0);
+  }
 }
 
 function createTimesheetAddButton(item) {
@@ -593,6 +686,234 @@ function createTimesheetAddButton(item) {
     openEffortMenu(item, button);
   });
   return button;
+}
+
+async function openCommentInput(item, anchorElement) {
+  closeCommentInput();
+  commentInputState = {
+    isOpen: true,
+    isLoading: true,
+    error: "",
+    anchorRect: anchorElement.getBoundingClientRect(),
+    itemId: String(item.id),
+    commentCount: commentCountsByItem.get(item.id) ?? 0,
+    comments: [],
+  };
+  renderCommentInput();
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: GET_COMMENTS_MESSAGE_TYPE,
+      workItemId: item.id,
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Не удалось загрузить комментарии.");
+    }
+
+    const newComments = Array.isArray(response.comments) ? response.comments : [];
+    commentCountsByItem.set(item.id, newComments.length);
+    updateCommentBadge(item.id, newComments.length);
+    commentInputState = {
+      ...commentInputState,
+      isLoading: false,
+      comments: newComments,
+      commentCount: newComments.length,
+    };
+  } catch (error) {
+    commentInputState = {
+      ...commentInputState,
+      isLoading: false,
+      error: error instanceof Error ? error.message : String(error),
+      commentCount: commentInputState.commentCount,
+    };
+  }
+
+  renderCommentInput();
+}
+
+function closeCommentInput() {
+  const currentItemId = commentInputState.itemId;
+  const container = document.querySelector(".popup__comment-input[data-item-id='" + currentItemId + "']");
+  container?.remove();
+  commentInputState = {
+    isOpen: false,
+    isLoading: false,
+    error: "",
+    anchorRect: null,
+    itemId: "",
+    commentCount: 0,
+    comments: [],
+  };
+  requestAnimationFrame(() => applyPopupMaxHeight());
+}
+
+function renderCommentInput() {
+  const container = document.querySelector(".popup__comment-input[data-item-id='" + commentInputState.itemId + "']");
+
+  if (!commentInputState.isOpen) {
+    container?.remove();
+    return;
+  }
+
+  if (container) {
+    container.remove();
+  }
+
+  const listItem = document.querySelector(".popup__item[data-item-id='" + commentInputState.itemId + "']");
+  if (!listItem) return;
+
+  const commentContainer = document.createElement("div");
+  commentContainer.className = "popup__comment-input";
+  commentContainer.dataset.itemId = commentInputState.itemId;
+
+  const threadList = document.createElement("div");
+  threadList.className = "popup__comment-thread";
+
+  if (commentInputState.isLoading) {
+    const loading = document.createElement("div");
+    loading.className = "popup__comment-loading";
+    loading.textContent = "Загрузка комментариев...";
+    threadList.appendChild(loading);
+  } else if (commentInputState.error) {
+    const errorDiv = document.createElement("div");
+    errorDiv.className = "popup__comment-error";
+    errorDiv.textContent = commentInputState.error;
+    threadList.appendChild(errorDiv);
+  } else {
+    const comments = commentInputState.comments;
+    if (!comments.length) {
+      const empty = document.createElement("div");
+      empty.className = "popup__comment-empty";
+      empty.textContent = "Нет комментариев";
+      threadList.appendChild(empty);
+    } else {
+      for (const comment of comments) {
+        threadList.appendChild(createCommentElement(comment));
+      }
+    }
+  }
+
+  commentContainer.appendChild(threadList);
+
+  if (!commentInputState.isLoading && !commentInputState.error) {
+    const form = document.createElement("form");
+    form.className = "popup__comment-form";
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "popup__comment-textarea";
+    textarea.placeholder = "Написать комментарий...";
+    textarea.rows = 2;
+    textarea.setAttribute("aria-label", "Написать комментарий");
+
+    const sendBtn = document.createElement("button");
+    sendBtn.type = "submit";
+    sendBtn.className = "popup__comment-send";
+    sendBtn.innerHTML = "↑";
+    sendBtn.title = "Отправить";
+
+    form.appendChild(textarea);
+    form.appendChild(sendBtn);
+    threadList.appendChild(form);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = textarea.value.trim();
+      if (!text) return;
+
+      textarea.value = "";
+      commentInputState = {
+        ...commentInputState,
+        isLoading: true,
+        error: "",
+      };
+      renderCommentInput();
+
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: ADD_COMMENT_MESSAGE_TYPE,
+          workItemId: commentInputState.itemId,
+          text: text,
+        });
+
+        if (!response?.ok) {
+          throw new Error(response?.error || "Не удалось отправить комментарий.");
+        }
+
+        const newComments = Array.isArray(response.comments) ? response.comments : [];
+        commentCountsByItem.set(commentInputState.itemId, newComments.length);
+        commentInputState = {
+          ...commentInputState,
+          isLoading: false,
+          comments: newComments,
+          commentCount: newComments.length,
+        };
+        updateCommentBadge(commentInputState.itemId, newComments.length);
+      } catch (error) {
+        commentInputState = {
+          ...commentInputState,
+          isLoading: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      renderCommentInput();
+    });
+
+    requestAnimationFrame(() => textarea.focus());
+  }
+
+  listItem.insertAdjacentElement('afterend', commentContainer);
+}
+
+function createCommentElement(comment) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "popup__comment-wrapper";
+
+  const headerRow = document.createElement("div");
+  headerRow.className = "popup__comment-meta";
+
+  let avatarImg = null;
+  if (comment.avatarUrl) {
+    avatarImg = document.createElement("img");
+    avatarImg.className = "popup__comment-avatar";
+    avatarImg.src = comment.avatarUrl;
+    avatarImg.alt = "";
+  } else {
+    const avatarFallback = document.createElement("span");
+    avatarFallback.className = "popup__comment-avatar-fallback";
+    const nameParts = (comment.author || "Неизвестный").trim().split(/\s+/);
+    const initials = nameParts.length > 1
+      ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
+      : (nameParts[0][0] || "Н").toUpperCase();
+    avatarFallback.textContent = initials;
+    avatarImg = avatarFallback;
+  }
+
+  const author = document.createElement("span");
+  author.className = "popup__comment-author";
+  author.textContent = comment.author || "Неизвестный";
+
+  const time = document.createElement("span");
+  time.className = "popup__comment-time";
+  time.textContent = comment.createdAt ? formatTimestamp(comment.createdAt) : "";
+
+  headerRow.append(avatarImg, author, time);
+
+  const body = document.createElement("div");
+  body.className = "popup__comment-text";
+  if (comment.text) {
+    // If text contains HTML tags, use as-is; otherwise convert newlines to <br>
+    const text = comment.text;
+    if (/<[^>]*>/.test(text)) {
+      body.innerHTML = text;
+    } else {
+      body.innerHTML = text.replace(/\n/g, '<br>');
+    }
+  }
+
+  wrapper.append(headerRow, body);
+  return wrapper;
 }
 
 function createLinkRow(item) {
@@ -658,6 +979,26 @@ function handleDocumentClickForMenus(event) {
 
   if (effortMenuState.isOpen && !target.closest(".popup__effort-menu")) {
     closeEffortMenu();
+  }
+
+  if (commentInputState.isOpen) {
+    const commentContainer = target.closest(".popup__comment-input");
+    if (commentContainer) {
+      const itemId = commentContainer.dataset.itemId;
+      if (itemId !== commentInputState.itemId) {
+        closeCommentInput();
+      }
+    } else {
+      const commentButton = target.closest(".popup__comment-icon");
+      if (commentButton) {
+        const itemId = commentButton.dataset.itemId;
+        if (itemId !== commentInputState.itemId) {
+          closeCommentInput();
+        }
+      } else {
+        closeCommentInput();
+      }
+    }
   }
 }
 

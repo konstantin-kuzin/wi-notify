@@ -5,7 +5,9 @@ import {
   validateAdoConfig,
 } from "./ado-config.mjs";
 import {
+  createWorkItemComment,
   fetchConnectionIdentity,
+  fetchWorkItemComments,
   fetchWorkItemTypeStates,
   fetchWorkItemsByIds,
   logAdoError,
@@ -25,6 +27,8 @@ const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
 const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
+const GET_COMMENTS_MESSAGE_TYPE = "get-comments";
+const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
 const STORAGE_KEY = "wiState";
 
 const DEFAULT_STATE = {
@@ -239,6 +243,68 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
       } catch (error) {
         logAdoError("addToTimesheet", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.type === GET_COMMENTS_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const workItemId = Number(message.workItemId);
+        const comments = await fetchWorkItemComments(config, workItemId);
+        sendResponse({ ok: true, workItemId: String(message.workItemId), comments });
+      } catch (error) {
+        logAdoError("getComments", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.type === ADD_COMMENT_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const workItemId = Number(message.workItemId);
+        const text = typeof message.text === "string" ? message.text : "";
+
+        await createWorkItemComment(config, workItemId, text);
+
+        const comments = await fetchWorkItemComments(config, workItemId);
+        sendResponse({ ok: true, workItemId: String(message.workItemId), comments });
+      } catch (error) {
+        logAdoError("addComment", error);
         sendResponse({
           ok: false,
           error: error instanceof Error ? error.message : String(error),

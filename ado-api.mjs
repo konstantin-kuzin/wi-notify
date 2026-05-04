@@ -11,6 +11,7 @@ const typeStatesCache = new Map();
 const workItemTypeIconCache = new Map();
 const workItemIconsCatalogCache = new Map();
 const projectProcessIdCache = new Map();
+const projectGuidCache = new Map();
 
 /**
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
@@ -796,4 +797,92 @@ function delay(ms) {
 export function logAdoError(context, error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[ado] ${context}: ${message}`, error);
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {number} workItemId
+ */
+export async function fetchWorkItemComments(config, workItemId) {
+  const id = Number(workItemId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("Некорректный id work item для загрузки комментариев.");
+  }
+
+  try {
+    const project = encodeURIComponent(config.project.trim());
+    const query = new URLSearchParams({
+      "api-version": resolveApiVersion(config),
+    });
+    const data = await adoFetch(
+      config,
+      `${project}/_apis/wit/workItems/${id}/comments?${query.toString()}`,
+    );
+
+    const comments = Array.isArray(data?.value) ? data.value : Array.isArray(data?.comments) ? data.comments : [];
+    const out = [];
+
+    for (const comment of comments) {
+      const createdBy = comment?.createdBy ?? {};
+      out.push({
+        id: String(comment?.id ?? ""),
+        author: normalizeText(createdBy?.displayName || createdBy?.uniqueName || createdBy?.name || "Неизвестный"),
+        avatarUrl: normalizeText(createdBy?.imageUrl || createdBy?._links?.avatar?.href || createdBy?.url || ""),
+        createdAt: normalizeIsoDate(comment?.createdDate),
+        text: comment?.text ?? "",
+      });
+    }
+
+    return out.sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+  } catch (error) {
+    if (error.message.includes("404")) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {number} workItemId
+ * @param {string} text
+ */
+export async function createWorkItemComment(config, workItemId, text) {
+  const id = Number(workItemId);
+  const commentText = String(text ?? "").trim();
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("Некорректный id work item для добавления комментария.");
+  }
+
+  if (!commentText) {
+    throw new Error("Комментарий не может быть пустым.");
+  }
+
+  // Convert newlines to HTML <br> tags for proper display in Azure DevOps
+  const htmlText = commentText.replace(/\n/g, '<br>');
+
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+
+  // For older Azure DevOps Server versions, add comment via work item update
+  await adoFetch(
+    config,
+    `${project}/_apis/wit/workitems/${id}?${query.toString()}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+      },
+      body: JSON.stringify([
+        {
+          op: "add",
+          path: "/fields/System.History",
+          value: htmlText,
+        },
+      ]),
+    },
+  );
 }
