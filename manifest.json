@@ -7,7 +7,8 @@
   "permissions": ["alarms", "storage", "notifications"],
   "host_permissions": [
     "https://hqrndtfs.avp.ru/*",
-    "https://hqrndtfsts.avp.ru/*"
+    "https://hqrndtfsts.avp.ru/*",
+    "https://raw.githubusercontent.com/konstantin-kuzin/wi-notify/*"
   ],
   "optional_host_permissions": ["https://dev.azure.com/*"],
   "options_ui": {

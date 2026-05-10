@@ -6,6 +6,7 @@ const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
 const GET_COMMENTS_MESSAGE_TYPE = "get-comments";
 const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
+const UPDATE_STATE_KEY = "wiUpdateState";
 const DEFAULT_FILTER = "all";
 const DEFAULT_STATE = {
   items: [],
@@ -23,6 +24,7 @@ const emptyState = document.querySelector("#empty-state");
 const itemsList = document.querySelector("#items-list");
 const refreshButton = document.querySelector("#refresh-button");
 const optionsLink = document.querySelector("#options-link");
+const updateChip = document.querySelector("#update-chip");
 const filterButtons = [...document.querySelectorAll("[data-filter]")];
 const searchInput = document.querySelector("#search-input");
 const searchClearButton = document.querySelector("#search-clear");
@@ -47,12 +49,13 @@ const WORK_ITEM_TYPE_ICONS = {
     className: "popup__type-glyph--bug",
     glyph: "\ueabc",
     useFont: true,
-  }
+  },
 };
 
 let isRefreshing = false;
 let currentFilter = DEFAULT_FILTER;
 let currentState = { ...DEFAULT_STATE };
+let updateState = { hasUpdate: false, latestVersion: "" };
 /** Режим списка после поиска по Enter (по всем статусам). */
 let isSearchMode = false;
 /** Последний выполненный запрос (для повторного применения при обновлении данных). */
@@ -95,7 +98,10 @@ let timesheetNoticeState = {
   isLoading: false,
   timerId: null,
 };
-const EFFORT_HOURS_OPTIONS = Array.from({ length: 16 }, (_item, index) => (index + 1) * 0.5);
+const EFFORT_HOURS_OPTIONS = Array.from(
+  { length: 16 },
+  (_item, index) => (index + 1) * 0.5,
+);
 
 const fontReadyPromise = ensureLocalAdoFont();
 void init();
@@ -115,15 +121,17 @@ async function ensureLocalAdoFont() {
   const buffer = await response.arrayBuffer();
   const fontFamilies = ["Bowtie", "bowtie"];
 
-  await Promise.all(fontFamilies.map(async (family) => {
-    if (document.fonts.check(`16px "${family}"`)) {
-      return;
-    }
+  await Promise.all(
+    fontFamilies.map(async (family) => {
+      if (document.fonts.check(`16px "${family}"`)) {
+        return;
+      }
 
-    const font = new FontFace(family, buffer);
-    await font.load();
-    document.fonts.add(font);
-  }));
+      const font = new FontFace(family, buffer);
+      await font.load();
+      document.fonts.add(font);
+    }),
+  );
 
   return true;
 }
@@ -150,6 +158,7 @@ async function init() {
 
   applyPopupMaxHeight();
   currentState = await loadState();
+  updateState = await loadUpdateState();
   render();
   void bootstrapCommentCounts();
 
@@ -187,17 +196,24 @@ async function init() {
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local" || !changes[STORAGE_KEY]) {
+    if (areaName !== "local") {
       return;
     }
 
-    currentState = {
-      ...DEFAULT_STATE,
-      ...(changes[STORAGE_KEY].newValue ?? {}),
-    };
-    render();
-    if (isSearchMode && lastSearchQuery) {
-      void refetchSearchCatalog({ silent: true });
+    if (changes[STORAGE_KEY]) {
+      currentState = {
+        ...DEFAULT_STATE,
+        ...(changes[STORAGE_KEY].newValue ?? {}),
+      };
+      render();
+      if (isSearchMode && lastSearchQuery) {
+        void refetchSearchCatalog({ silent: true });
+      }
+    }
+
+    if (changes[UPDATE_STATE_KEY]) {
+      updateState = normalizeUpdateState(changes[UPDATE_STATE_KEY].newValue);
+      renderUpdateChip();
     }
   });
 }
@@ -211,10 +227,25 @@ async function loadState() {
   };
 }
 
+async function loadUpdateState() {
+  const stored = await chrome.storage.local.get(UPDATE_STATE_KEY);
+  return normalizeUpdateState(stored[UPDATE_STATE_KEY]);
+}
+
+function normalizeUpdateState(rawState) {
+  return {
+    hasUpdate: Boolean(rawState?.hasUpdate),
+    latestVersion:
+      typeof rawState?.latestVersion === "string" ? rawState.latestVersion : "",
+  };
+}
+
 async function bootstrapCommentCounts(items = null) {
   const targetItems = Array.isArray(items)
     ? items
-    : isSearchMode ? searchResultItems : getFilteredItems();
+    : isSearchMode
+      ? searchResultItems
+      : getFilteredItems();
   await Promise.all(
     targetItems.map(async (item) => {
       try {
@@ -246,6 +277,7 @@ function render() {
   }
 
   updateSearchChrome();
+  renderUpdateChip();
 
   lastUpdated.textContent = formatTimestamp(currentState.lastCheckedAt);
 
@@ -345,10 +377,24 @@ function render() {
   renderStatusMenu();
 }
 
+function renderUpdateChip() {
+  if (!updateChip) {
+    return;
+  }
+
+  const latestVersion = updateState.latestVersion.trim();
+  const isVisible = updateState.hasUpdate && latestVersion;
+
+  updateChip.classList.toggle("hidden", !isVisible);
+  updateChip.textContent = isVisible ? `Новая версия - ${latestVersion}` : "";
+}
+
 function getFilteredItems() {
   const items = Array.isArray(currentState.items) ? currentState.items : [];
 
-  let filtered = items.filter((item) => normalizeTypeKey(item.type) !== "requirement");
+  let filtered = items.filter(
+    (item) => normalizeTypeKey(item.type) !== "requirement",
+  );
 
   if (currentFilter === "all") {
     return filtered;
@@ -400,7 +446,9 @@ function clearSearchUi() {
 
 function computeSearchMatches(rawQuery, sourceItems) {
   const catalog = Array.isArray(sourceItems) ? sourceItems : [];
-  const base = catalog.filter((item) => normalizeTypeKey(item.type) !== "requirement");
+  const base = catalog.filter(
+    (item) => normalizeTypeKey(item.type) !== "requirement",
+  );
   const query = String(rawQuery ?? "").trim();
   if (!query) {
     return [];
@@ -483,11 +531,16 @@ async function refetchSearchCatalog(options = {}) {
     });
 
     if (!response?.ok) {
-      throw new Error(response?.error || "Не удалось загрузить данные для поиска.");
+      throw new Error(
+        response?.error || "Не удалось загрузить данные для поиска.",
+      );
     }
 
     searchBackendItems = Array.isArray(response.items) ? response.items : [];
-    searchResultItems = computeSearchMatches(lastSearchQuery, searchBackendItems);
+    searchResultItems = computeSearchMatches(
+      lastSearchQuery,
+      searchBackendItems,
+    );
     searchFetchError = "";
   } catch (error) {
     searchFetchError = error instanceof Error ? error.message : String(error);
@@ -519,7 +572,9 @@ function getGroupedItems(items) {
 
   const orderedKeys = [
     ...STATE_GROUP_ORDER.filter((key) => grouped.has(key)),
-    ...[...grouped.keys()].filter((key) => !STATE_GROUP_ORDER.includes(key)).sort(),
+    ...[...grouped.keys()]
+      .filter((key) => !STATE_GROUP_ORDER.includes(key))
+      .sort(),
   ];
 
   return orderedKeys.map((key) => ({
@@ -550,7 +605,9 @@ function normalizeStateCategory(stateCategory) {
 function getDisplayStateName(stateCategory) {
   const normalized = normalizeStateCategory(stateCategory);
 
-  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Other";
+  return normalized
+    ? normalized[0].toUpperCase() + normalized.slice(1)
+    : "Other";
 }
 
 async function refreshNow() {
@@ -567,7 +624,9 @@ async function refreshNow() {
     });
 
     if (!response?.ok) {
-      throw new Error(response?.error || "Не удалось выполнить ручное обновление.");
+      throw new Error(
+        response?.error || "Не удалось выполнить ручное обновление.",
+      );
     }
   } finally {
     isRefreshing = false;
@@ -617,8 +676,13 @@ function createItemElement(item) {
     window.close();
   });
 
-  const commentCount = (item.comments?.length) || commentCountsByItem.get(item.id) || 0;
-  listItem.append(link, createCommentButton(item, commentCount), createTimesheetAddButton(item));
+  const commentCount =
+    item.comments?.length || commentCountsByItem.get(item.id) || 0;
+  listItem.append(
+    link,
+    createCommentButton(item, commentCount),
+    createTimesheetAddButton(item),
+  );
 
   return listItem;
 }
@@ -679,8 +743,8 @@ function createTimesheetAddButton(item) {
   button.type = "button";
   button.className = "popup__timesheet-add";
   button.textContent = "+";
-  button.setAttribute("aria-label", `Добавить #${item.id} в TimeSheet`);
-  button.title = "Добавить время в TimeSheet";
+  button.setAttribute("aria-label", `Списать #${item.id} в TimeSheet`);
+  button.title = "Списать Time в Sheet";
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -712,7 +776,9 @@ async function openCommentInput(item, anchorElement) {
       throw new Error(response?.error || "Не удалось загрузить комментарии.");
     }
 
-    const newComments = Array.isArray(response.comments) ? response.comments : [];
+    const newComments = Array.isArray(response.comments)
+      ? response.comments
+      : [];
     commentCountsByItem.set(item.id, newComments.length);
     updateCommentBadge(item.id, newComments.length);
     commentInputState = {
@@ -735,7 +801,9 @@ async function openCommentInput(item, anchorElement) {
 
 function closeCommentInput() {
   const currentItemId = commentInputState.itemId;
-  const container = document.querySelector(".popup__comment-input[data-item-id='" + currentItemId + "']");
+  const container = document.querySelector(
+    ".popup__comment-input[data-item-id='" + currentItemId + "']",
+  );
   container?.remove();
   commentInputState = {
     isOpen: false,
@@ -750,7 +818,9 @@ function closeCommentInput() {
 }
 
 function renderCommentInput() {
-  const container = document.querySelector(".popup__comment-input[data-item-id='" + commentInputState.itemId + "']");
+  const container = document.querySelector(
+    ".popup__comment-input[data-item-id='" + commentInputState.itemId + "']",
+  );
 
   if (!commentInputState.isOpen) {
     container?.remove();
@@ -761,7 +831,9 @@ function renderCommentInput() {
     container.remove();
   }
 
-  const listItem = document.querySelector(".popup__item[data-item-id='" + commentInputState.itemId + "']");
+  const listItem = document.querySelector(
+    ".popup__item[data-item-id='" + commentInputState.itemId + "']",
+  );
   if (!listItem) return;
 
   const commentContainer = document.createElement("div");
@@ -838,10 +910,14 @@ function renderCommentInput() {
         });
 
         if (!response?.ok) {
-          throw new Error(response?.error || "Не удалось отправить комментарий.");
+          throw new Error(
+            response?.error || "Не удалось отправить комментарий.",
+          );
         }
 
-        const newComments = Array.isArray(response.comments) ? response.comments : [];
+        const newComments = Array.isArray(response.comments)
+          ? response.comments
+          : [];
         commentCountsByItem.set(commentInputState.itemId, newComments.length);
         commentInputState = {
           ...commentInputState,
@@ -864,7 +940,7 @@ function renderCommentInput() {
     requestAnimationFrame(() => textarea.focus());
   }
 
-  listItem.insertAdjacentElement('afterend', commentContainer);
+  listItem.insertAdjacentElement("afterend", commentContainer);
 }
 
 function createCommentElement(comment) {
@@ -884,9 +960,10 @@ function createCommentElement(comment) {
     const avatarFallback = document.createElement("span");
     avatarFallback.className = "popup__comment-avatar-fallback";
     const nameParts = (comment.author || "Неизвестный").trim().split(/\s+/);
-    const initials = nameParts.length > 1
-      ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
-      : (nameParts[0][0] || "Н").toUpperCase();
+    const initials =
+      nameParts.length > 1
+        ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
+        : (nameParts[0][0] || "Н").toUpperCase();
     avatarFallback.textContent = initials;
     avatarImg = avatarFallback;
   }
@@ -897,7 +974,9 @@ function createCommentElement(comment) {
 
   const time = document.createElement("span");
   time.className = "popup__comment-time";
-  time.textContent = comment.createdAt ? formatTimestamp(comment.createdAt) : "";
+  time.textContent = comment.createdAt
+    ? formatTimestamp(comment.createdAt)
+    : "";
 
   headerRow.append(avatarImg, author, time);
 
@@ -909,7 +988,7 @@ function createCommentElement(comment) {
     if (/<[^>]*>/.test(text)) {
       body.innerHTML = text;
     } else {
-      body.innerHTML = text.replace(/\n/g, '<br>');
+      body.innerHTML = text.replace(/\n/g, "<br>");
     }
   }
 
@@ -947,7 +1026,9 @@ function createLinkLabel(item) {
       .replace(/\[([^\]]+)\]/g, '<span class="postfix">$&</span>')
       .trim();
 
-    html = titleWithoutPrefix ? `${titleWithoutPrefix} ${highlightedTags}` : highlightedTags;
+    html = titleWithoutPrefix
+      ? `${titleWithoutPrefix} ${highlightedTags}`
+      : highlightedTags;
   }
 
   label.innerHTML = html;
@@ -956,10 +1037,16 @@ function createLinkLabel(item) {
 
 function createStateBadge(item) {
   const stateBadge = document.createElement("button");
+  const stateName = item.state || item.stateCategory || "";
   stateBadge.type = "button";
-  stateBadge.className = `popup__badge popup__badge--${item.stateCategory || "active"}`;
-  stateBadge.textContent = item.state || item.stateCategory || "";
-  stateBadge.setAttribute("aria-label", `Изменить статус #${item.id}`);
+  stateBadge.className = `popup__badge popup__badge--state popup__badge--${item.stateCategory || "active"}`;
+  stateBadge.title = stateName;
+  stateBadge.setAttribute(
+    "aria-label",
+    stateName
+      ? `Изменить статус #${item.id}: ${stateName}`
+      : `Изменить статус #${item.id}`,
+  );
   stateBadge.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1024,7 +1111,9 @@ async function openStatusMenu(item, anchorElement) {
     });
 
     if (!response?.ok) {
-      throw new Error(response?.error || "Не удалось загрузить список статусов.");
+      throw new Error(
+        response?.error || "Не удалось загрузить список статусов.",
+      );
     }
 
     statusMenuState = {
@@ -1067,8 +1156,14 @@ function renderStatusMenu() {
 
   const menu = document.createElement("div");
   menu.className = "popup__status-menu";
-  const top = Math.min(window.innerHeight - 180, statusMenuState.anchorRect.bottom + 6);
-  const left = Math.min(window.innerWidth - 200, Math.max(8, statusMenuState.anchorRect.left));
+  const top = Math.min(
+    window.innerHeight - 180,
+    statusMenuState.anchorRect.bottom + 6,
+  );
+  const left = Math.min(
+    window.innerWidth - 200,
+    Math.max(8, statusMenuState.anchorRect.left),
+  );
   menu.style.top = `${Math.max(8, top)}px`;
   menu.style.left = `${Math.max(8, left)}px`;
 
@@ -1083,7 +1178,8 @@ function renderStatusMenu() {
 
   if (statusMenuState.error) {
     const error = document.createElement("div");
-    error.className = "popup__status-menu-message popup__status-menu-message--error";
+    error.className =
+      "popup__status-menu-message popup__status-menu-message--error";
     error.textContent = statusMenuState.error;
     menu.append(error);
     document.body.append(menu);
@@ -1106,7 +1202,9 @@ function renderStatusMenu() {
     button.type = "button";
     button.className = "popup__status-menu-option";
     button.textContent = stateName;
-    if (stateName.toLowerCase() === statusMenuState.currentState.toLowerCase()) {
+    if (
+      stateName.toLowerCase() === statusMenuState.currentState.toLowerCase()
+    ) {
       button.classList.add("popup__status-menu-option--active");
     }
     button.addEventListener("click", async (event) => {
@@ -1153,8 +1251,14 @@ function renderEffortMenu() {
 
   const menu = document.createElement("div");
   menu.className = "popup__effort-menu";
-  const top = Math.min(window.innerHeight - 284, effortMenuState.anchorRect.bottom + 6);
-  const left = Math.min(window.innerWidth - 260, Math.max(8, effortMenuState.anchorRect.left - 224));
+  const top = Math.min(
+    window.innerHeight - 284,
+    effortMenuState.anchorRect.bottom + 6,
+  );
+  const left = Math.min(
+    window.innerWidth - 260,
+    Math.max(8, effortMenuState.anchorRect.left - 224),
+  );
   menu.style.top = `${Math.max(8, top)}px`;
   menu.style.left = `${Math.max(8, left)}px`;
 
@@ -1179,7 +1283,8 @@ function renderEffortMenu() {
   dateInput.className = "popup__effort-date-input";
   dateInput.title = "Дата списания";
   dateInput.setAttribute("aria-label", "Дата списания");
-  dateInput.value = effortMenuState.selectedDate || formatDateInputValue(new Date());
+  dateInput.value =
+    effortMenuState.selectedDate || formatDateInputValue(new Date());
   dateInput.addEventListener("click", (event) => {
     event.stopPropagation();
     if (typeof dateInput.showPicker === "function") {
@@ -1254,7 +1359,8 @@ async function addItemToTimesheet(hours) {
   }
 
   const targetItemId = effortMenuState.itemId;
-  const targetDate = effortMenuState.selectedDate || formatDateInputValue(new Date());
+  const targetDate =
+    effortMenuState.selectedDate || formatDateInputValue(new Date());
   closeEffortMenu();
   setTimesheetNotice({
     tone: "info",
@@ -1271,7 +1377,9 @@ async function addItemToTimesheet(hours) {
     });
 
     if (!response?.ok) {
-      throw new Error(response?.error || "Не удалось добавить запись в TimeSheet.");
+      throw new Error(
+        response?.error || "Не удалось добавить запись в TimeSheet.",
+      );
     }
 
     setTimesheetNotice({
@@ -1424,7 +1532,10 @@ function patchItemState(itemId, nextState, nextCategory, updatedAt) {
 function createAgeBadge(item) {
   const ageBadge = document.createElement("span");
   ageBadge.className = "popup__badge popup__badge--age";
-  ageBadge.textContent = formatAgeShort(item.updatedAt ?? item.createdAt, currentState.lastCheckedAt);
+  ageBadge.textContent = formatAgeShort(
+    item.updatedAt ?? item.createdAt,
+    currentState.lastCheckedAt,
+  );
   return ageBadge;
 }
 
@@ -1470,9 +1581,13 @@ function createRemoteTypeIcon(url, type) {
   image.decoding = "async";
   image.loading = "lazy";
   image.referrerPolicy = "no-referrer";
-  image.addEventListener("error", () => {
-    icon.replaceChildren(createTypeIcon(type));
-  }, { once: true });
+  image.addEventListener(
+    "error",
+    () => {
+      icon.replaceChildren(createTypeIcon(type));
+    },
+    { once: true },
+  );
 
   icon.append(image);
   return icon;
@@ -1496,7 +1611,10 @@ function formatAgeShort(dateValue, baseValue) {
     return "";
   }
 
-  const diffMinutes = Math.max(0, Math.floor((base.getTime() - date.getTime()) / 60000));
+  const diffMinutes = Math.max(
+    0,
+    Math.floor((base.getTime() - date.getTime()) / 60000),
+  );
 
   if (diffMinutes < 60) {
     return `${Math.max(1, diffMinutes)} м`;
@@ -1550,7 +1668,9 @@ function formatTimestamp(timestamp) {
 }
 
 function isSameLocalDay(left, right) {
-  return left.getFullYear() === right.getFullYear()
-    && left.getMonth() === right.getMonth()
-    && left.getDate() === right.getDate();
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
 }

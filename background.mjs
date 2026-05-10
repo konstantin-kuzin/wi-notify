@@ -30,6 +30,8 @@ const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
 const GET_COMMENTS_MESSAGE_TYPE = "get-comments";
 const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
 const STORAGE_KEY = "wiState";
+const UPDATE_STATE_KEY = "wiUpdateState";
+const GITHUB_MANIFEST_URL = "https://raw.githubusercontent.com/konstantin-kuzin/wi-notify/main/manifest.json";
 
 const DEFAULT_STATE = {
   items: [],
@@ -351,6 +353,7 @@ async function restoreBadgeFromState() {
 
 async function bootstrap({ refresh, trigger }) {
   await ensureAlarm();
+  void checkForUpdates();
 
   const state = await getStoredState();
   await updateBadge(state.lastError ? 0 : state.count, !!state.lastError);
@@ -509,6 +512,83 @@ async function saveState(state) {
   await chrome.storage.local.set({
     [STORAGE_KEY]: state,
   });
+}
+
+async function checkForUpdates() {
+  const localVersion = chrome.runtime.getManifest().version;
+  const checkedAt = new Date().toISOString();
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 3000);
+
+  try {
+    const response = await fetch(GITHUB_MANIFEST_URL, {
+      cache: "no-store",
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub manifest HTTP ${response.status}`);
+    }
+
+    const remoteManifest = await response.json();
+    const latestVersion = typeof remoteManifest?.version === "string"
+      ? remoteManifest.version.trim()
+      : "";
+
+    if (!latestVersion) {
+      throw new Error("GitHub manifest does not contain version");
+    }
+
+    await chrome.storage.local.set({
+      [UPDATE_STATE_KEY]: {
+        checkedAt,
+        localVersion,
+        latestVersion,
+        hasUpdate: isRemoteVersionNewer(latestVersion, localVersion),
+        error: null,
+      },
+    });
+  } catch (error) {
+    await chrome.storage.local.set({
+      [UPDATE_STATE_KEY]: {
+        checkedAt,
+        localVersion,
+        latestVersion: "",
+        hasUpdate: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function isRemoteVersionNewer(remoteVersion, localVersion) {
+  const remoteParts = parseVersionParts(remoteVersion);
+  const localParts = parseVersionParts(localVersion);
+  const maxLength = Math.max(remoteParts.length, localParts.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const remotePart = remoteParts[index] ?? 0;
+    const localPart = localParts[index] ?? 0;
+
+    if (remotePart > localPart) {
+      return true;
+    }
+
+    if (remotePart < localPart) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function parseVersionParts(version) {
+  return String(version ?? "")
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
 }
 
 async function updateBadge(count, isError) {
