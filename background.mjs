@@ -230,11 +230,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const login = String(identity.uniqueName ?? "").trim();
         const workItemId = Number(message.workItemId);
         const hours = Number(message.hours);
+        const date = String(message.date ?? "").trim();
 
         const result = await addWorkItemEffortToCurrentWeek({
           login,
           workItemId,
           hours,
+          date,
         });
 
         sendResponse({

@@ -77,6 +77,7 @@ let effortMenuState = {
   anchorRect: null,
   itemId: "",
   isLoading: false,
+  selectedDate: "",
 };
 let commentInputState = {
   isOpen: false,
@@ -1126,6 +1127,7 @@ function openEffortMenu(item, anchorElement) {
     anchorRect: anchorElement.getBoundingClientRect(),
     itemId: String(item.id),
     isLoading: false,
+    selectedDate: formatDateInputValue(new Date()),
   };
   renderEffortMenu();
 }
@@ -1136,6 +1138,7 @@ function closeEffortMenu() {
     anchorRect: null,
     itemId: "",
     isLoading: false,
+    selectedDate: "",
   };
   renderEffortMenu();
 }
@@ -1150,8 +1153,8 @@ function renderEffortMenu() {
 
   const menu = document.createElement("div");
   menu.className = "popup__effort-menu";
-  const top = Math.min(window.innerHeight - 220, effortMenuState.anchorRect.bottom + 6);
-  const left = Math.min(window.innerWidth - 220, Math.max(8, effortMenuState.anchorRect.left - 182));
+  const top = Math.min(window.innerHeight - 284, effortMenuState.anchorRect.bottom + 6);
+  const left = Math.min(window.innerWidth - 260, Math.max(8, effortMenuState.anchorRect.left - 224));
   menu.style.top = `${Math.max(8, top)}px`;
   menu.style.left = `${Math.max(8, left)}px`;
 
@@ -1164,10 +1167,38 @@ function renderEffortMenu() {
     return;
   }
 
+  const header = document.createElement("div");
+  header.className = "popup__effort-menu-header";
+
   const title = document.createElement("div");
   title.className = "popup__effort-menu-title";
   title.textContent = "Добавить Time в Sheet";
-  menu.append(title);
+
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.className = "popup__effort-date-input";
+  dateInput.title = "Дата списания";
+  dateInput.setAttribute("aria-label", "Дата списания");
+  dateInput.value = effortMenuState.selectedDate || formatDateInputValue(new Date());
+  dateInput.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (typeof dateInput.showPicker === "function") {
+      try {
+        dateInput.showPicker();
+      } catch (_error) {
+        // Native date input still opens on supported browsers when showPicker is unavailable.
+      }
+    }
+  });
+  dateInput.addEventListener("change", () => {
+    effortMenuState = {
+      ...effortMenuState,
+      selectedDate: dateInput.value || formatDateInputValue(new Date()),
+    };
+  });
+
+  header.append(title, dateInput);
+  menu.append(header);
 
   for (const hours of EFFORT_HOURS_OPTIONS) {
     const button = document.createElement("button");
@@ -1201,6 +1232,21 @@ function formatHoursLabel(hours) {
   return `${value.toFixed(1).replace(".", ",")}`;
 }
 
+function formatDateInputValue(date) {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateNoticeLabel(dateValue) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateValue ?? ""));
+  if (!match) {
+    return "";
+  }
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
 async function addItemToTimesheet(hours) {
   if (!effortMenuState.itemId) {
     closeEffortMenu();
@@ -1208,6 +1254,7 @@ async function addItemToTimesheet(hours) {
   }
 
   const targetItemId = effortMenuState.itemId;
+  const targetDate = effortMenuState.selectedDate || formatDateInputValue(new Date());
   closeEffortMenu();
   setTimesheetNotice({
     tone: "info",
@@ -1220,6 +1267,7 @@ async function addItemToTimesheet(hours) {
       type: ADD_TO_TIMESHEET_MESSAGE_TYPE,
       workItemId: targetItemId,
       hours,
+      date: targetDate,
     });
 
     if (!response?.ok) {
@@ -1228,7 +1276,7 @@ async function addItemToTimesheet(hours) {
 
     setTimesheetNotice({
       tone: "success",
-      message: `Добавлено в TimeSheet: ${formatHoursLabel(hours)}`,
+      message: `Добавлено в TimeSheet: ${formatHoursLabel(hours)} за ${formatDateNoticeLabel(targetDate)}`,
       isLoading: false,
       autoHideMs: 4500,
     });

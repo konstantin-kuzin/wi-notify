@@ -15,6 +15,7 @@ export async function addWorkItemEffortToCurrentWeek(options) {
   const login = String(options?.login ?? "").trim();
   const workItemId = Number(options?.workItemId);
   const hours = Number(options?.hours);
+  const targetDate = parseTargetDate(options?.date);
 
   if (!Number.isInteger(workItemId) || workItemId <= 0) {
     throw new Error("Некорректный work item id для TimeSheet.");
@@ -24,13 +25,12 @@ export async function addWorkItemEffortToCurrentWeek(options) {
     throw new Error("Некорректное значение времени.");
   }
 
-  const now = new Date();
-  const period = getWeekPeriodUtc(now);
+  const period = getWeekPeriodUtc(targetDate);
   const resolvedLogin = await resolveTimesheetLogin(root, login);
   const account = resolvedLogin.toLowerCase();
   const model = await getTimesheetModel(root, account, period.fromIso, period.toIso);
   const timesheet = getCurrentTimesheet(model);
-  const dayKey = resolveDayKey(timesheet, now);
+  const dayKey = resolveDayKey(timesheet, targetDate);
   const beforeValue = getWorkItemDayValueForEmptyActivity(timesheet, workItemId, dayKey);
   const targetValue = roundToTwo(beforeValue + hours);
 
@@ -42,7 +42,7 @@ export async function addWorkItemEffortToCurrentWeek(options) {
     workItemId,
     hours: targetValue,
     activity,
-    date: now,
+    date: targetDate,
   });
 
   const afterValue = await verifySavedValueWithRetry({
@@ -68,7 +68,41 @@ export async function addWorkItemEffortToCurrentWeek(options) {
     dayKey,
     workItemId: String(workItemId),
     hours,
+    date: formatDateInputValue(targetDate),
   };
+}
+
+function parseTargetDate(value) {
+  if (value === undefined || value === null || value === "") {
+    return new Date();
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new Error("Некорректная дата для TimeSheet.");
+    }
+    return value;
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!match) {
+    throw new Error("Некорректная дата для TimeSheet.");
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) {
+    throw new Error("Некорректная дата для TimeSheet.");
+  }
+
+  return date;
 }
 
 function getWorkItemDayTotal(timesheet, workItemId, dayKey) {
@@ -325,6 +359,13 @@ function formatDayKey(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const year = String(date.getFullYear());
   return `${day}.${month}.${year}`;
+}
+
+function formatDateInputValue(date) {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear());
+  return `${year}-${month}-${day}`;
 }
 
 function roundToTwo(value) {
