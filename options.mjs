@@ -3,7 +3,14 @@ import {
   DEFAULT_ADO_CONFIG,
   loadAdoConfig,
   validateAdoConfig,
+  validateReviewConfig,
 } from "./ado-config.mjs";
+import {
+  AI_CONFIG_KEY,
+  DEFAULT_AI_CONFIG,
+  loadAiConfig,
+  validateAiConfig,
+} from "./ai-config.mjs";
 const form = document.querySelector("#options-form");
 const apiRootInput = document.querySelector("#api-root");
 const projectInput = document.querySelector("#project");
@@ -11,6 +18,26 @@ const iterationPathSelect = document.querySelector("#iteration-path");
 const refreshIntervalMinutesInput = document.querySelector("#refresh-interval-minutes");
 const saveButton = document.querySelector("#save-button");
 const saveStatus = document.querySelector("#save-status");
+
+const reviewForm = document.querySelector("#review-options-form");
+const reviewProductNameInput = document.querySelector("#review-product-name");
+const reviewDesignLeadCombo = document.querySelector("#review-design-lead-combo");
+const reviewDesignLeadInput = document.querySelector("#review-design-lead-input");
+const reviewDesignLeadList = document.querySelector("#review-design-lead-list");
+const reviewDesignLeadValueInput = document.querySelector("#review-design-lead-value");
+const reviewDesignLeadNameInput = document.querySelector("#review-design-lead-name");
+const reviewDesignLeadAvatarInput = document.querySelector("#review-design-lead-avatar");
+const reviewDesignLeadAvatarSlot = document.querySelector("#review-design-lead-avatar-slot");
+const saveReviewButton = document.querySelector("#save-review-button");
+const saveReviewStatus = document.querySelector("#save-review-status");
+
+const aiForm = document.querySelector("#ai-options-form");
+const aiBaseUrlInput = document.querySelector("#ai-base-url");
+const aiApiKeyInput = document.querySelector("#ai-api-key");
+const aiModelInput = document.querySelector("#ai-model");
+const aiServicePromptTextarea = document.querySelector("#ai-service-prompt");
+const saveAiButton = document.querySelector("#save-ai-button");
+const saveAiStatus = document.querySelector("#save-ai-status");
 
 void init();
 
@@ -40,6 +67,38 @@ async function init() {
   });
 
   await fetchAndPopulateIterations(config.iterationPath ?? "");
+
+  reviewProductNameInput.value = config.reviewProductName ?? DEFAULT_ADO_CONFIG.reviewProductName;
+  reviewDesignLeadValueInput.value = config.reviewDesignLead ?? DEFAULT_ADO_CONFIG.reviewDesignLead;
+  reviewDesignLeadNameInput.value = config.reviewDesignLeadName ?? DEFAULT_ADO_CONFIG.reviewDesignLeadName;
+  reviewDesignLeadAvatarInput.value = config.reviewDesignLeadAvatar ?? DEFAULT_ADO_CONFIG.reviewDesignLeadAvatar;
+  reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
+  updateDesignLeadFieldAvatar();
+  setupDesignLeadCombo();
+
+  saveReviewButton.addEventListener("click", () => {
+    void handleReviewSubmit();
+  });
+
+  reviewForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void handleReviewSubmit();
+  });
+
+  const aiConfig = await loadAiConfig();
+  aiBaseUrlInput.value = aiConfig.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl;
+  aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
+  aiModelInput.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
+  aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
+
+  saveAiButton.addEventListener("click", () => {
+    void handleAiSubmit();
+  });
+
+  aiForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void handleAiSubmit();
+  });
 }
 
 async function buildConfigForApi() {
@@ -54,7 +113,17 @@ async function buildConfigForApi() {
   };
 }
 
+async function buildAiConfigForSave() {
+  const stored = await loadAiConfig();
 
+  return {
+    ...stored,
+    baseUrl: aiBaseUrlInput.value.trim(),
+    apiKey: aiApiKeyInput.value.trim(),
+    model: aiModelInput.value.trim(),
+    servicePrompt: aiServicePromptTextarea.value.trim(),
+  };
+}
 
 async function handleSubmit() {
   saveStatus.textContent = "";
@@ -104,6 +173,275 @@ async function handleSubmit() {
   saveStatus.classList.add("options__status--ok");
 }
 
+async function handleReviewSubmit() {
+  saveReviewStatus.textContent = "";
+  saveReviewStatus.classList.remove("options__status--ok", "options__status--err");
+
+  const stored = await loadAdoConfig();
+  const merged = {
+    ...stored,
+    reviewProductName: reviewProductNameInput.value.trim(),
+    reviewDesignLead: reviewDesignLeadValueInput.value.trim(),
+    reviewDesignLeadName: reviewDesignLeadNameInput.value.trim(),
+    reviewDesignLeadAvatar: reviewDesignLeadAvatarInput.value.trim(),
+    // Поля без UI — хранятся хардкодом из дефолтов конфига.
+    reviewWorkItemType: DEFAULT_ADO_CONFIG.reviewWorkItemType,
+    reviewTemplateId: DEFAULT_ADO_CONFIG.reviewTemplateId,
+    reviewTemplateTeam: DEFAULT_ADO_CONFIG.reviewTemplateTeam,
+    reviewDesignTypes: DEFAULT_ADO_CONFIG.reviewDesignTypes,
+    reviewPlaceholderText: DEFAULT_ADO_CONFIG.reviewPlaceholderText,
+    reviewParentId: DEFAULT_ADO_CONFIG.reviewParentId,
+  };
+
+  const errors = validateReviewConfig(merged);
+
+  if (errors.length > 0) {
+    saveReviewStatus.textContent = errors.join(" ");
+    saveReviewStatus.classList.add("options__status--err");
+    return;
+  }
+
+  try {
+    await chrome.storage.local.set({
+      [ADO_CONFIG_KEY]: merged,
+    });
+  } catch (error) {
+    saveReviewStatus.textContent = "Ошибка сохранения: " + error.message;
+    saveReviewStatus.classList.add("options__status--err");
+    return;
+  }
+
+  saveReviewStatus.textContent = "Настройки задачи на ревью сохранены.";
+  saveReviewStatus.classList.add("options__status--ok");
+}
+
+// --- Дизайн-лид: комбобокс с поиском пользователей -------------------------
+
+const SEARCH_IDENTITIES_MESSAGE_TYPE = "search-identities";
+
+function requestSearchIdentities(query) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: SEARCH_IDENTITIES_MESSAGE_TYPE, query },
+      (response) => {
+        const lastError = chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message));
+          return;
+        }
+        resolve(response);
+      },
+    );
+  });
+}
+
+function getInitials(name) {
+  const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    return "";
+  }
+  const first = parts[0][0] ?? "";
+  const second = parts.length > 1 ? parts[parts.length - 1][0] ?? "" : "";
+  return (first + second).toUpperCase();
+}
+
+/** Создаёт кружок-аватар: инициалы + картинка поверх (если загрузится). */
+function createAvatar(name, avatarUrl) {
+  const wrap = document.createElement("span");
+  wrap.className = "options__avatar";
+
+  const initials = document.createElement("span");
+  initials.className = "options__avatar-initials";
+  initials.textContent = getInitials(name);
+  wrap.appendChild(initials);
+
+  if (avatarUrl) {
+    const img = document.createElement("img");
+    img.className = "options__avatar-img";
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => img.remove());
+    img.src = avatarUrl;
+    wrap.appendChild(img);
+  }
+
+  return wrap;
+}
+
+/** Обновляет аватар выбранного дизайн-лида в самом поле. */
+function updateDesignLeadFieldAvatar() {
+  reviewDesignLeadAvatarSlot.innerHTML = "";
+  const name = reviewDesignLeadNameInput.value.trim();
+
+  if (!name) {
+    reviewDesignLeadCombo.classList.remove("options__combo--has-avatar");
+    return;
+  }
+
+  reviewDesignLeadAvatarSlot.appendChild(
+    createAvatar(name, reviewDesignLeadAvatarInput.value.trim()),
+  );
+  reviewDesignLeadCombo.classList.add("options__combo--has-avatar");
+}
+
+function clearDesignLeadSelection() {
+  reviewDesignLeadValueInput.value = "";
+  reviewDesignLeadNameInput.value = "";
+  reviewDesignLeadAvatarInput.value = "";
+  updateDesignLeadFieldAvatar();
+}
+
+function hideDesignLeadList() {
+  reviewDesignLeadList.hidden = true;
+  reviewDesignLeadList.innerHTML = "";
+  reviewDesignLeadInput.setAttribute("aria-expanded", "false");
+}
+
+function renderDesignLeadList(items) {
+  reviewDesignLeadList.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("li");
+    empty.className = "options__combo-empty";
+    empty.textContent = "Пользователи не найдены";
+    reviewDesignLeadList.appendChild(empty);
+  } else {
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.className = "options__combo-item";
+      li.setAttribute("role", "option");
+
+      li.appendChild(createAvatar(item.displayName || item.uniqueName, item.avatarUrl));
+
+      const text = document.createElement("div");
+      text.className = "options__combo-item-text";
+
+      const name = document.createElement("span");
+      name.className = "options__combo-item-name";
+      name.textContent = item.displayName || item.uniqueName;
+      text.appendChild(name);
+
+      if (item.uniqueName) {
+        const sub = document.createElement("span");
+        sub.className = "options__combo-item-sub";
+        sub.textContent = item.uniqueName;
+        text.appendChild(sub);
+      }
+
+      li.appendChild(text);
+
+      // mousedown, чтобы выбор сработал раньше blur поля.
+      li.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        reviewDesignLeadValueInput.value = item.assignedTo || item.displayName;
+        reviewDesignLeadNameInput.value = item.displayName || item.uniqueName;
+        reviewDesignLeadAvatarInput.value = item.avatarUrl || "";
+        reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
+        updateDesignLeadFieldAvatar();
+        hideDesignLeadList();
+      });
+
+      reviewDesignLeadList.appendChild(li);
+    }
+  }
+
+  reviewDesignLeadList.hidden = false;
+  reviewDesignLeadInput.setAttribute("aria-expanded", "true");
+}
+
+function setupDesignLeadCombo() {
+  let debounceId = null;
+  let requestSeq = 0;
+
+  reviewDesignLeadInput.addEventListener("input", () => {
+    const query = reviewDesignLeadInput.value.trim();
+
+    // Пустое поле — снимаем назначение.
+    if (!query) {
+      clearDesignLeadSelection();
+      hideDesignLeadList();
+      return;
+    }
+
+    if (query.length < 2) {
+      hideDesignLeadList();
+      return;
+    }
+
+    if (debounceId !== null) {
+      window.clearTimeout(debounceId);
+    }
+
+    debounceId = window.setTimeout(async () => {
+      const seq = ++requestSeq;
+      try {
+        const response = await requestSearchIdentities(query);
+        if (seq !== requestSeq) {
+          return; // пришёл ответ на устаревший запрос
+        }
+        if (response?.ok) {
+          renderDesignLeadList(response.results ?? []);
+        } else {
+          renderDesignLeadList([]);
+        }
+      } catch (_error) {
+        if (seq === requestSeq) {
+          hideDesignLeadList();
+        }
+      }
+    }, 300);
+  });
+
+  // При потере фокуса возвращаем в поле подтверждённое имя и прячем список.
+  reviewDesignLeadInput.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
+      hideDesignLeadList();
+    }, 150);
+  });
+}
+
+async function handleAiSubmit() {
+  saveAiStatus.textContent = "";
+  saveAiStatus.classList.remove("options__status--ok", "options__status--err");
+
+  const merged = await buildAiConfigForSave();
+  const errors = validateAiConfig(merged);
+
+  if (errors.length > 0) {
+    saveAiStatus.textContent = errors.join(" ");
+    saveAiStatus.classList.add("options__status--err");
+    return;
+  }
+
+  try {
+    await chrome.storage.local.set({
+      [AI_CONFIG_KEY]: merged,
+    });
+    console.log('AI Config saved successfully:', merged);
+  } catch (error) {
+    console.error('Failed to save AI config:', error);
+    saveAiStatus.textContent = "Ошибка сохранения AI настроек: " + error.message;
+    saveAiStatus.classList.add("options__status--err");
+    return;
+  }
+
+  // Request host permission for the AI API base URL if not already granted
+  try {
+    await requestAiHostPermissionIfNeeded(merged.baseUrl);
+  } catch (error) {
+    console.error('AI host permission request failed:', error);
+    saveAiStatus.textContent = error instanceof Error
+      ? error.message
+      : String(error);
+    saveAiStatus.classList.add("options__status--err");
+    return;
+  }
+
+  saveAiStatus.textContent = "AI настройки сохранены, доступ к AI API выдан.";
+  saveAiStatus.classList.add("options__status--ok");
+}
+
 async function requestDevAzureHostPermissionIfNeeded(apiRoot) {
   let hostname = "";
 
@@ -125,6 +463,33 @@ async function requestDevAzureHostPermissionIfNeeded(apiRoot) {
   }
 
   await chrome.permissions.request({ origins });
+}
+
+async function requestAiHostPermissionIfNeeded(baseUrl) {
+  let originPattern = "";
+
+  try {
+    const parsedUrl = new URL(baseUrl);
+    originPattern = `${parsedUrl.protocol}//${parsedUrl.host}/*`;
+  } catch (_error) {
+    return;
+  }
+
+  const origins = [originPattern];
+  const already = await chrome.permissions.contains({ origins });
+
+  if (already) {
+    console.log("[WI Notify AI] AI host permission already granted.", { origins });
+    return;
+  }
+
+  console.log("[WI Notify AI] Requesting AI host permission.", { origins });
+  const granted = await chrome.permissions.request({ origins });
+  console.log("[WI Notify AI] AI host permission request result.", { origins, granted });
+
+  if (!granted) {
+    throw new Error(`Не выдан доступ к ${originPattern}. Разрешите host permission для AI API.`);
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   normalizeApiRoot,
+  parseReviewParentId,
   resolveApiVersion,
 } from "./ado-config.mjs";
 
@@ -212,6 +213,150 @@ export async function fetchConnectionIdentity(config) {
     displayName: data?.authenticatedUser?.displayName ?? "",
     uniqueName: data?.authenticatedUser?.uniqueName ?? "",
   };
+}
+
+/**
+ * Собирает unique name, который ADO принимает в System.AssignedTo.
+ * Нельзя подставлять голый samAccountName в «Имя <alias>» — сервер вернёт 400.
+ *
+ * Приоритет: email → DOMAIN\alias → пусто (тогда оставляем только displayName).
+ * @param {Record<string, unknown>} item
+ * @returns {string}
+ */
+function resolveIdentityUniqueName(item) {
+  const mail = normalizeText(item?.mail || item?.signInAddress);
+  if (mail.includes("@")) {
+    return mail;
+  }
+
+  const sam = normalizeText(
+    item?.samAccountName || item?.accountName || item?.account,
+  );
+  const domain = normalizeText(item?.domain || item?.scopeName);
+
+  // On-prem Windows identity: DOMAIN\alias
+  if (sam && domain && domain.includes("\\") === false && !domain.includes("@")) {
+    return `${domain}\\${sam}`;
+  }
+
+  // Уже готовый unique name вида DOMAIN\alias
+  if (sam.includes("\\")) {
+    return sam;
+  }
+
+  return "";
+}
+
+/**
+ * Строка для System.AssignedTo: «Display Name <uniqueName>» или только имя.
+ * @param {string} displayName
+ * @param {string} uniqueName
+ */
+function buildAssignedToValue(displayName, uniqueName) {
+  if (uniqueName && displayName) {
+    return `${displayName} <${uniqueName}>`;
+  }
+  return uniqueName || displayName;
+}
+
+/**
+ * Нормализует сохранённое значение AssignedTo.
+ * Старый баг сохранял «Имя <samAccount>» без email/домена — ADO отклоняет такое.
+ * В этом случае оставляем только display name.
+ * @param {unknown} raw
+ * @returns {string}
+ */
+function normalizeAssignedToIdentity(raw) {
+  const value = String(raw ?? "").trim();
+  if (!value) {
+    return "";
+  }
+
+  const match = value.match(/^(.*)<([^>]+)>\s*$/);
+  if (!match) {
+    return value;
+  }
+
+  const displayName = normalizeText(match[1]);
+  const uniqueName = normalizeText(match[2]);
+
+  // Валидный unique name: email или DOMAIN\alias
+  if (uniqueName.includes("@") || uniqueName.includes("\\")) {
+    return buildAssignedToValue(displayName, uniqueName);
+  }
+
+  // Битый формат «Имя <Goreminsky>» — пробуем назначить по display name.
+  return displayName || value;
+}
+
+/**
+ * Ищет пользователей ADO по строке (для выбора «Дизайн-лида»).
+ * Использует Identity Picker — тот же сервис, что и веб-интерфейс ADO.
+ *
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} query
+ * @returns {Promise<Array<{ displayName: string, uniqueName: string, assignedTo: string, avatarUrl: string }>>}
+ */
+export async function searchIdentities(config, query) {
+  const q = String(query ?? "").trim();
+
+  if (q.length < 2) {
+    return [];
+  }
+
+  const search = new URLSearchParams({ "api-version": "5.0-preview.1" });
+  const body = {
+    query: q,
+    identityTypes: ["user"],
+    operationScopes: ["ims", "source"],
+    properties: [
+      "DisplayName",
+      "Account",
+      "Active",
+      "Mail",
+      "SamAccountName",
+      "SignInAddress",
+      "Domain",
+    ],
+    options: { MinResults: 5, MaxResults: 20 },
+  };
+
+  const data = await adoFetch(
+    config,
+    `_apis/IdentityPicker/Identities?${search.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+
+  const identities = data?.results?.[0]?.identities ?? [];
+  const root = normalizeApiRoot(config.apiRoot);
+
+  return identities
+    .map((item) => {
+      const displayName = normalizeText(item?.displayName);
+      const uniqueName = resolveIdentityUniqueName(item);
+      const assignedTo = buildAssignedToValue(displayName, uniqueName);
+
+      // Аватар: используем image из ответа либо классический endpoint IdentityImage по id.
+      const rawImage = normalizeText(item?.image);
+      let avatarUrl = "";
+      if (rawImage) {
+        avatarUrl = rawImage.startsWith("http")
+          ? rawImage
+          : `${root}/${rawImage.replace(/^\//, "")}`;
+      } else {
+        const avatarId = item?.localId || item?.entityId || item?.originId;
+        if (avatarId) {
+          avatarUrl = `${root}/_api/_common/identityImage?id=${encodeURIComponent(avatarId)}`;
+        }
+      }
+
+      return { displayName, uniqueName, assignedTo, avatarUrl };
+    })
+    .filter((item) => item.displayName || item.uniqueName);
 }
 
 /**
@@ -797,6 +942,283 @@ function delay(ms) {
 export function logAdoError(context, error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[ado] ${context}: ${message}`, error);
+}
+
+/**
+ * Возвращает исходный work item по id (авторитетные данные для FR-003).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {number|string} workItemId
+ */
+export async function fetchWorkItemById(config, workItemId) {
+  const id = Number(workItemId);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("Некорректный id исходной задачи.");
+  }
+
+  const items = await fetchWorkItemsByIds(config, [id]);
+  const workItem = Array.isArray(items) ? items[0] : null;
+
+  if (!workItem) {
+    throw new Error("Исходная задача не найдена (404): проверьте номер задачи.");
+  }
+
+  return workItem;
+}
+
+function escapeAdoHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+// Поля шаблона, которые нельзя переносить в patch создания напрямую
+// (id-поля дублируют path-варианты, а *-Add — служебные ключи шаблонов).
+const TEMPLATE_SKIP_FIELDS = new Set([
+  "System.AreaId",
+  "System.IterationId",
+]);
+
+/**
+ * Читает поля командного шаблона задачи на ревью (work item template).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<Record<string, unknown>|null>}
+ */
+async function fetchReviewTemplateFields(config) {
+  const templateId = String(config.reviewTemplateId ?? "").trim();
+  const team = String(config.reviewTemplateTeam ?? "").trim();
+
+  if (!templateId || !team) {
+    return null;
+  }
+
+  const project = encodeURIComponent(config.project.trim());
+  const teamSeg = encodeURIComponent(team);
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+
+  const data = await adoFetch(
+    config,
+    `${project}/${teamSeg}/_apis/wit/templates/${encodeURIComponent(templateId)}?${query.toString()}`,
+  );
+
+  return data?.fields ?? null;
+}
+
+/** Подставляет ссылку исходной задачи в раздел «Продуктовая задача» описания шаблона (FR-010).
+ * Ссылкой является тип и номер задачи («Task 9663335»), название идёт обычным текстом.
+ * Если передан pixsoUrl — заменяет плейсхолдер раздела «Макеты» на ссылку. */
+function applyReviewDescription(templateDescription, placeholder, source, pixsoUrl = "") {
+  const { title, url, id, type } = source;
+  const linkLabel = `${type ? `${type} ` : ""}${id}`.trim();
+  const linkHtml =
+    `<a href="${escapeAdoHtml(url)}">${escapeAdoHtml(linkLabel)}</a>: ${escapeAdoHtml(title)}`;
+  let result = String(templateDescription ?? "");
+  const placeholderText = String(placeholder ?? "").trim();
+
+  if (placeholderText && result.includes(placeholderText)) {
+    result = result.split(placeholderText).join(linkHtml);
+  } else {
+    const prodBlock = `<div><b>Продуктовая задача</b></div><div>${linkHtml}</div>`;
+    result = result ? `${prodBlock}${result}` : prodBlock;
+  }
+
+  const layoutsPlaceholder = "Ссылка на макеты в Pixso (не забудьте дать доступ на редактирование команде ДС)";
+  const pixso = String(pixsoUrl ?? "").trim();
+  if (pixso && result.includes(layoutsPlaceholder)) {
+    const pixsoLinkHtml =
+      `<a href="${escapeAdoHtml(pixso)}">${escapeAdoHtml(pixso)}</a>`;
+    result = result.split(layoutsPlaceholder).join(pixsoLinkHtml);
+  }
+
+  return result;
+}
+
+/**
+ * Создаёт задачу на ревью из задачи на дизайн по командному шаблону и проставляет связи.
+ * Возвращает id/url созданной задачи и предупреждения о частичных сбоях (FR-014).
+ *
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {{ sourceId: number|string, pixsoUrl?: string }} source
+ */
+export async function createReviewWorkItem(config, source) {
+  const sourceId = Number(source?.sourceId);
+
+  if (!Number.isInteger(sourceId) || sourceId <= 0) {
+    throw new Error("Исходная задача ещё не сохранена или не имеет номера.");
+  }
+
+  const type = String(config.reviewWorkItemType ?? "").trim() || "Review";
+
+  // FR-003: авторитетно читаем данные исходной задачи с сервера.
+  const sourceWorkItem = await fetchWorkItemById(config, sourceId);
+  const fields = sourceWorkItem.fields ?? {};
+  const sourceTitle = normalizeText(fields["System.Title"]);
+  const sourceType = normalizeText(fields["System.WorkItemType"]);
+  const sourceProject = normalizeText(fields["System.TeamProject"]) || config.project.trim();
+
+  if (!sourceTitle) {
+    throw new Error("Не удалось определить заголовок исходной задачи.");
+  }
+
+  const sourceUrl = buildWorkItemWebUrl(config.apiRoot, sourceProject, sourceId, sourceWorkItem);
+  const placeholder = String(config.reviewPlaceholderText ?? "").trim() || "Название и ссылка на задачу";
+  const pixsoUrl = String(source?.pixsoUrl ?? "").trim();
+
+  // Поля создаваемой задачи: берём из шаблона, при недоступности — минимальный набор.
+  let templateFields = null;
+  try {
+    templateFields = await fetchReviewTemplateFields(config);
+  } catch (error) {
+    logAdoError("createReviewWorkItem:template", error);
+    templateFields = null;
+  }
+
+  const createFields = {};
+
+  if (templateFields) {
+    for (const [ref, value] of Object.entries(templateFields)) {
+      if (TEMPLATE_SKIP_FIELDS.has(ref) || ref.endsWith("-Add")) {
+        continue;
+      }
+      createFields[ref] = value;
+    }
+  } else {
+    // Резервные обязательные поля типа Review.
+    createFields["KL.SizeSymbol"] = "M";
+    createFields["KL.Design"] = "New";
+  }
+
+  // FR-008: заголовок из исходной задачи; при заданном названии продукта — «[Продукт] …».
+  const productName = String(config.reviewProductName ?? "").trim();
+  createFields["System.Title"] = productName ? `[${productName}] ${sourceTitle}` : sourceTitle;
+
+  // Если указан дизайн-лид — назначаем задачу на него.
+  // В storage мог остаться старый битый формат «Имя <samAccount>» без домена —
+  // ADO такое отклоняет, поэтому нормализуем.
+  const designLead = normalizeAssignedToIdentity(config.reviewDesignLead);
+  if (designLead) {
+    createFields["System.AssignedTo"] = designLead;
+  }
+  createFields["System.Description"] = applyReviewDescription(
+    templateFields?.["System.Description"],
+    placeholder,
+    { title: sourceTitle, url: sourceUrl, id: sourceId, type: sourceType },
+    pixsoUrl,
+  );
+
+  const patch = Object.entries(createFields)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+
+  const project = encodeURIComponent(config.project.trim());
+  const typeSeg = `$${encodeURIComponent(type)}`;
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+
+  // FR-007: создание work item типа Review.
+  const created = await adoFetch(
+    config,
+    `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+      },
+      body: JSON.stringify(patch),
+    },
+  );
+
+  const reviewId = Number(created?.id);
+
+  if (!Number.isInteger(reviewId) || reviewId <= 0) {
+    throw new Error("Не удалось создать задачу на ревью: сервер не вернул номер задачи.");
+  }
+
+  const reviewUrl = buildWorkItemWebUrl(config.apiRoot, config.project, reviewId, created);
+  const warnings = [];
+
+  // FR-012: связь Related с исходной задачей.
+  try {
+    await addWorkItemRelation(
+      config,
+      reviewId,
+      "System.LinkTypes.Related",
+      buildWorkItemApiUrl(config, sourceId),
+    );
+  } catch (error) {
+    logAdoError("createReviewWorkItem:related", error);
+    warnings.push(
+      `Связь Related с исходной задачей #${sourceId} не добавлена: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  // FR-013: привязка как child к родительской задаче из настроек (child → parent).
+  const parentId = parseReviewParentId(config.reviewParentId);
+  if (parentId) {
+    try {
+      await addWorkItemRelation(
+        config,
+        reviewId,
+        "System.LinkTypes.Hierarchy-Reverse",
+        buildWorkItemApiUrl(config, parentId),
+      );
+    } catch (error) {
+      logAdoError("createReviewWorkItem:parent", error);
+      warnings.push(
+        `Привязка к родителю #${parentId} не выполнена: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return {
+    id: reviewId,
+    url: reviewUrl,
+    title: sourceTitle,
+    warnings,
+  };
+}
+
+/** Ссылка на work item в REST API — используется как target для связей. */
+function buildWorkItemApiUrl(config, id) {
+  return `${normalizeApiRoot(config.apiRoot)}/_apis/wit/workItems/${Number(id)}`;
+}
+
+/**
+ * Добавляет связь к work item отдельным PATCH-запросом.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {number} workItemId
+ * @param {string} rel
+ * @param {string} targetUrl
+ */
+async function addWorkItemRelation(config, workItemId, rel, targetUrl) {
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+
+  await adoFetch(
+    config,
+    `${project}/_apis/wit/workitems/${Number(workItemId)}?${query.toString()}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+      },
+      body: JSON.stringify([
+        {
+          op: "add",
+          path: "/relations/-",
+          value: { rel, url: targetUrl },
+        },
+      ]),
+    },
+  );
 }
 
 /**

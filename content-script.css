@@ -1,0 +1,218 @@
+.ai-rewrite-button {
+  margin-left: 8px; /* Adjust as needed for spacing */
+}
+
+.ai-rewrite-button-container {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ai-rewrite-button-container .ai-rewrite-button {
+  margin-left: 0;
+}
+
+.ai-rewrite-button .icon-sparkle-fill::before {
+  font-family: "AzDevMDL2"; /* Use ADO's icon font */
+  content: "\E706"; /* Placeholder for a sparkle/AI-like icon from AzDevMDL2 */
+  margin-right: 4px;
+}
+
+.ai-rewrite-button.is-loading {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+/* Basic spinner for loading state */
+.ai-rewrite-button.is-loading .button-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Кнопка «Создать задачу на ревью» */
+
+/* Классический TFS: li.menu-item внутри menu-bar — стили как у Follow/соседей. */
+li.menu-item.wi-create-review-container {
+  display: inline-block;
+  cursor: pointer;
+  /* Как у .menu-bar .menu-item в work-item toolbar и Follow: padding 5px, margin-left 2.5px */
+  margin: 0 0 0 2.5px;
+  padding: 5px;
+  border: 1px solid transparent;
+  vertical-align: top;
+  box-sizing: border-box;
+  background-color: rgba(var(--palette-neutral-6, 239, 239, 239), 1);
+  color: #000000;
+  text-decoration: none;
+}
+
+/* Ховер как у соседних пунктов: palette-primary-tint-30 (#deecf9).
+   TFS дополнительно вешает класс .hover — учитываем оба варианта. */
+li.menu-item.wi-create-review-container:hover:not(.disabled):not([data-state="pending"]),
+li.menu-item.wi-create-review-container.hover:not(.disabled):not([data-state="pending"]) {
+  background-color: rgba(var(--palette-primary-tint-30, 222, 236, 249), 1);
+  outline: none;
+  text-decoration: none;
+}
+
+li.menu-item.wi-create-review-container .wi-create-review-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin: 0 4px 0 0;
+  vertical-align: middle;
+  font-family: "WINotifyReviewIcons", "Bowtie", "bowtie", "AzDevMDL2", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 14px;
+  color: #c800a1;
+  text-decoration: none !important;
+  border-bottom: none !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+li.menu-item.wi-create-review-container:hover .wi-create-review-icon,
+li.menu-item.wi-create-review-container.hover .wi-create-review-icon,
+li.menu-item.wi-create-review-container .wi-create-review-label {
+  text-decoration: none !important;
+  border-bottom: none !important;
+  vertical-align: middle;
+}
+
+li.menu-item.wi-create-review-container[data-state="pending"],
+li.menu-item.wi-create-review-container.disabled {
+  cursor: wait;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Bolt UI fallback: отдельная кнопка */
+div.wi-create-review-container {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 4px 0 8px;
+  vertical-align: middle;
+}
+
+.wi-create-review-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 5px 8px;
+  white-space: nowrap;
+  border: none;
+  border-radius: 0;
+  background: #efefef;
+  color: #000000;
+  font-family: "Segoe UI VSS (Regular)", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: normal;
+  cursor: pointer;
+}
+
+.wi-create-review-button .wi-create-review-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  font-family: "WINotifyReviewIcons", "Bowtie", "bowtie", "AzDevMDL2", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1;
+  color: #c800a1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.wi-create-review-button .wi-create-review-icon:hover {
+  text-decoration: none;
+}
+
+.wi-create-review-button .wi-create-review-label {
+  line-height: 1;
+}
+
+.wi-create-review-button:hover {
+  background: #e4e4e4;
+  
+}
+
+.wi-create-review-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.wi-create-review-button[data-state="pending"] {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+/* Тост с результатом сценария */
+.wi-review-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  display: none;
+  max-width: 420px;
+  padding: 12px 40px 12px 14px;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #fff;
+  background: #323130;
+}
+
+.wi-review-toast.wi-review-toast--visible {
+  display: block;
+}
+
+.wi-review-toast[data-kind="success"] {
+  background: #107c10;
+}
+
+.wi-review-toast[data-kind="warning"] {
+  background: #986f0b;
+}
+
+.wi-review-toast[data-kind="error"] {
+  background: #a4262c;
+}
+
+.wi-review-toast__text {
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.wi-review-toast__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.wi-review-toast__close:hover {
+  opacity: 1;
+}

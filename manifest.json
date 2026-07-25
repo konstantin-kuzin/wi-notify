@@ -2,15 +2,20 @@
   "manifest_version": 3,
   "name": "WI Notify",
   "description": "Показывает work items, назначенные текущему пользователю в Azure DevOps",
-  "version": "0.2.1",
+"version": "0.3.0",
   "minimum_chrome_version": "116",
-  "permissions": ["alarms", "storage", "notifications"],
+  "permissions": ["alarms", "storage", "notifications", "clipboardRead"],
   "host_permissions": [
     "https://hqrndtfs.avp.ru/*",
     "https://hqrndtfsts.avp.ru/*",
-    "https://raw.githubusercontent.com/konstantin-kuzin/wi-notify/*"
+    "https://raw.githubusercontent.com/konstantin-kuzin/wi-notify/*",
+    "https://llm.kaspersky-labs.com/v1/"
   ],
-  "optional_host_permissions": ["https://dev.azure.com/*"],
+  "optional_host_permissions": [
+    "https://dev.azure.com/*",
+    "https://*/*",
+    "http://*/*"
+  ],
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
@@ -38,7 +43,19 @@
   "web_accessible_resources": [
     {
       "resources": ["icons/bowtie.woff", "icons/AzDevMDL2.woff"],
-      "matches": []
+      "matches": ["https://*/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://hqrndtfs.avp.ru/*",
+        "https://hqrndtfsts.avp.ru/*",
+        "https://dev.azure.com/*"
+      ],
+      "js": ["content-script.mjs"],
+      "css": ["content-script.css"],
+      "run_at": "document_idle"
     }
   ]
 }

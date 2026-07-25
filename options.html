@@ -11,6 +11,9 @@
       <h1 class="options__title">Настройки</h1>
 
       <form id="options-form" class="options__form">
+        <fieldset class="options__fieldset">
+          <legend class="options__fieldset-legend">Основные настройки</legend>
+
         <label class="options__field">
           <span class="options__label">Коллекция</span>
           <input
@@ -57,6 +60,116 @@
            <button class="options__button" type="button" id="save-button">Сохранить</button>
            <span class="options__status" id="save-status" role="status"></span>
          </div>
+        </fieldset>
+      </form>
+
+      <form id="review-options-form" class="options__form">
+        <fieldset class="options__fieldset">
+          <legend class="options__fieldset-legend">Задача на ревью</legend>
+
+          <label class="options__field">
+            <span class="options__label">Название продукта</span>
+            <input
+              class="options__input"
+              id="review-product-name"
+              name="reviewProductName"
+              type="text"
+              autocomplete="off"
+              placeholder="Например: KUMA"
+            >
+            <span class="options__hint">Добавляется в заголовок задачи на ревью в квадратных скобках перед названием исходной задачи: «[Продукт] …». Пусто — не добавлять.</span>
+          </label>
+
+          <div class="options__field">
+            <span class="options__label">Дизайн-лид</span>
+            <div class="options__combo" id="review-design-lead-combo">
+              <span class="options__combo-avatar-slot" id="review-design-lead-avatar-slot"></span>
+              <input
+                class="options__input"
+                id="review-design-lead-input"
+                type="text"
+                autocomplete="off"
+                placeholder="Начните вводить имя пользователя…"
+                role="combobox"
+                aria-expanded="false"
+                aria-autocomplete="list"
+              >
+              <ul class="options__combo-list" id="review-design-lead-list" role="listbox" hidden></ul>
+            </div>
+            <input type="hidden" id="review-design-lead-value">
+            <input type="hidden" id="review-design-lead-name">
+            <input type="hidden" id="review-design-lead-avatar">
+            <span class="options__hint">Поиск среди пользователей. Если указан, задача на ревью назначается на этого пользователя. Очистите поле, чтобы не назначать.</span>
+          </div>
+
+          <div class="options__actions">
+            <button class="options__button" type="button" id="save-review-button">Сохранить настройки ревью</button>
+            <span class="options__status" id="save-review-status" role="status"></span>
+          </div>
+        </fieldset>
+      </form>
+
+      <form id="ai-options-form" class="options__form">
+        <fieldset class="options__fieldset">
+          <legend class="options__fieldset-legend">Настройки AI</legend>
+          <label class="options__field">
+            <span class="options__label">AI Base URL</span>
+            <input
+              class="options__input"
+              id="ai-base-url"
+              name="aiBaseUrl"
+              type="url"
+              autocomplete="off"
+              placeholder="https://api.openai.com/v1"
+              required
+            >
+            <span class="options__hint">URL для OpenAI-совместимого API.</span>
+          </label>
+
+          <label class="options__field">
+            <span class="options__label">AI API Key</span>
+            <input
+              class="options__input"
+              id="ai-api-key"
+              name="aiApiKey"
+              type="password"
+              autocomplete="off"
+              placeholder="sk-…"
+              required
+            >
+            <span class="options__hint">API Key для авторизации.</span>
+          </label>
+
+          <label class="options__field">
+            <span class="options__label">AI Model</span>
+            <input
+              class="options__input"
+              id="ai-model"
+              name="aiModel"
+              type="text"
+              autocomplete="off"
+              placeholder="gpt-4o"
+              required
+            >
+            <span class="options__hint">Имя модели, например, gpt-4o.</span>
+          </label>
+
+          <label class="options__field">
+            <span class="options__label">AI Service Prompt</span>
+            <textarea
+              class="options__textarea"
+              id="ai-service-prompt"
+              name="aiServicePrompt"
+              required
+            ></textarea>
+            <span class="options__hint">Системный промпт для AI.</span>
+          </label>
+
+          <div class="options__actions">
+            <button class="options__button" type="button" id="save-ai-button">Сохранить AI настройки</button>
+            <span class="options__status" id="save-ai-status" role="status"></span>
+          </div>
+        </fieldset>
       </form>
     </main>
     <script type="module" src="options.mjs"></script>

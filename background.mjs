@@ -3,8 +3,11 @@ import {
   loadAdoConfig,
   resolveRefreshIntervalMinutes,
   validateAdoConfig,
+  validateReviewConfig,
 } from "./ado-config.mjs";
 import {
+  createReviewWorkItem,
+  searchIdentities,
   createWorkItemComment,
   fetchConnectionIdentity,
   fetchWorkItemComments,
@@ -20,6 +23,7 @@ import {
   updateWorkItemState,
 } from "./ado-api.mjs";
 import { addWorkItemEffortToCurrentWeek } from "./timesheet-api.mjs";
+import { chatCompletion } from "./ai-api.mjs";
 
 const ALARM_NAME = "refresh-work-items";
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
@@ -29,6 +33,13 @@ const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
 const GET_COMMENTS_MESSAGE_TYPE = "get-comments";
 const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
+const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
+const CREATE_REVIEW_TASK_TIMEOUT_MS = 60000;
+const SEARCH_IDENTITIES_MESSAGE_TYPE = "search-identities";
+const AI_PING_MESSAGE_TYPE = "ai-ping";
+const REWRITE_DESCRIPTION_MESSAGE_TYPE = "rewriteDescription";
+const REWRITE_DESCRIPTION_TIMEOUT_MS = 95000;
+const AI_BUILD_MARK = "2026-05-19-01";
 const STORAGE_KEY = "wiState";
 const UPDATE_STATE_KEY = "wiUpdateState";
 const GITHUB_MANIFEST_URL = "https://raw.githubusercontent.com/konstantin-kuzin/wi-notify/main/manifest.json";
@@ -44,11 +55,32 @@ const DEFAULT_STATE = {
   currentUserDisplayName: "",
 };
 
+function buildRewriteDescriptionPrompt({ title, description }) {
+  const normalizedTitle = String(title ?? "").trim();
+  const normalizedDescription = String(description ?? "").trim();
+
+  return [
+    "Перепиши описание work item для поля Description в Azure DevOps.",
+    "Учитывай и заголовок, и текущее описание.",
+    "Сохрани факты, технические детали, ограничения, ссылки, API-имена, статусы и шаги.",
+    "Сделай текст более структурированным и читаемым.",
+    "Не используй таблицы в любом виде; если нужно сравнение или группировка, используй списки.",
+    "Верни только готовый текст для Description без пояснений от себя.",
+    "",
+    `Title: ${normalizedTitle || "Untitled"}`,
+    "",
+    "Current Description:",
+    normalizedDescription,
+  ].join("\n");
+}
+
 chrome.runtime.onInstalled.addListener(() => {
+  console.log("[WI Notify AI] Extension installed/updated.", { build: AI_BUILD_MARK });
   void bootstrap({ refresh: true, trigger: "install" });
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  console.log("[WI Notify AI] Extension startup.", { build: AI_BUILD_MARK });
   void bootstrap({ refresh: true, trigger: "startup" });
 });
 
@@ -69,7 +101,21 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   void refreshWorkItems("config-change");
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === AI_PING_MESSAGE_TYPE) {
+    console.log("[WI Notify AI] Ping received.", {
+      build: AI_BUILD_MARK,
+      senderUrl: sender?.url ?? null,
+      senderOrigin: sender?.origin ?? null,
+    });
+    sendResponse({
+      ok: true,
+      type: AI_PING_MESSAGE_TYPE,
+      build: AI_BUILD_MARK,
+    });
+    return false;
+  }
+
   if (message?.type === REFRESH_MESSAGE_TYPE) {
     void restoreBadgeFromState();
 
@@ -316,6 +362,175 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
     })();
 
+    return true;
+  }
+
+  if (message?.type === CREATE_REVIEW_TASK_MESSAGE_TYPE) {
+    void (async () => {
+      let timeoutId = null;
+      let hasResponded = false;
+      const safeSendResponse = (payload) => {
+        if (hasResponded) {
+          return;
+        }
+
+        hasResponded = true;
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        sendResponse(payload);
+      };
+
+      try {
+        timeoutId = setTimeout(() => {
+          safeSendResponse({
+            ok: false,
+            error: `Превышено время ожидания создания задачи на ревью (${CREATE_REVIEW_TASK_TIMEOUT_MS} мс). Повторите позже.`,
+          });
+        }, CREATE_REVIEW_TASK_TIMEOUT_MS);
+
+        const config = await loadAdoConfig();
+        const validationErrors = [
+          ...validateAdoConfig(config),
+          ...validateReviewConfig(config),
+        ];
+
+        if (validationErrors.length > 0) {
+          safeSendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        // FR-007/FR-010: создаём задачу на ревью из шаблона и проставляем связи
+        // (Related — на исходную, child — к родительской из настроек).
+        const result = await createReviewWorkItem(config, {
+          sourceId: message.sourceId,
+          pixsoUrl: message.pixsoUrl,
+        });
+
+        // FR-015: открываем созданную задачу на ревью в новой вкладке.
+        let tabOpened = false;
+        try {
+          await chrome.tabs.create({ url: result.url, active: true });
+          tabOpened = true;
+        } catch (tabError) {
+          logAdoError("createReviewTask:openTab", tabError);
+        }
+
+        safeSendResponse({
+          ok: true,
+          id: result.id,
+          url: result.url,
+          title: result.title,
+          warnings: result.warnings ?? [],
+          tabOpened,
+        });
+      } catch (error) {
+        logAdoError("createReviewTask", error);
+        safeSendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.type === SEARCH_IDENTITIES_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const results = await searchIdentities(config, message.query);
+        sendResponse({ ok: true, results });
+      } catch (error) {
+        logAdoError("searchIdentities", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message?.action === REWRITE_DESCRIPTION_MESSAGE_TYPE) {
+    void (async () => {
+      let timeoutId = null;
+      let hasResponded = false;
+      const safeSendResponse = (payload) => {
+        if (hasResponded) {
+          return;
+        }
+
+        hasResponded = true;
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        sendResponse(payload);
+      };
+
+      try {
+        timeoutId = setTimeout(() => {
+          console.error("[WI Notify AI] rewriteDescription timed out in background.", {
+            timeoutMs: REWRITE_DESCRIPTION_TIMEOUT_MS,
+          });
+          safeSendResponse({
+            ok: false,
+            error: `AI rewrite timed out after ${REWRITE_DESCRIPTION_TIMEOUT_MS}ms in background.`,
+          });
+        }, REWRITE_DESCRIPTION_TIMEOUT_MS);
+
+        const originalText = typeof message.text === "string" ? message.text : "";
+        const workItemTitle = typeof message.title === "string" ? message.title : "";
+        console.log("[WI Notify AI] rewriteDescription message received.", {
+          build: AI_BUILD_MARK,
+          titleLength: workItemTitle.length,
+          textLength: originalText.length,
+          senderUrl: sender?.url ?? null,
+          senderOrigin: sender?.origin ?? null,
+        });
+        if (!originalText) {
+          console.warn("[WI Notify AI] rewriteDescription rejected: empty text.");
+          safeSendResponse({ ok: false, error: "No text provided for AI rewrite." });
+          return;
+        }
+
+        const rewritePrompt = buildRewriteDescriptionPrompt({
+          title: workItemTitle,
+          description: originalText,
+        });
+
+        console.log("[WI Notify AI] Calling chatCompletion.", {
+          promptLength: rewritePrompt.length,
+        });
+        const rewrittenText = await chatCompletion(rewritePrompt);
+        console.log("[WI Notify AI] chatCompletion resolved.", {
+          textLength: rewrittenText.length,
+          preview: rewrittenText.slice(0, 200),
+        });
+        safeSendResponse({ ok: true, rewrittenText });
+      } catch (error) {
+        console.error("[WI Notify AI] Error during AI rewrite in background script:", error);
+        safeSendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
     return true;
   }
 

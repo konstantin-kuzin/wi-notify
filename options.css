@@ -34,6 +34,11 @@ body {
   gap: 16px;
 }
 
+/* Отступы между блоками настроек */
+.options__form + .options__form {
+  margin-top: 24px;
+}
+
 .options__field {
   display: flex;
   flex-direction: column;
@@ -93,8 +98,11 @@ body {
 }
 
 .options__fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   margin: 0;
-  padding: 12px 14px;
+  padding: 16px 18px 18px;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -102,6 +110,116 @@ body {
 .options__fieldset-legend {
   padding: 0 6px;
   font-weight: 600;
+}
+
+/* Комбобокс с поиском (Дизайн-лид) */
+.options__combo {
+  position: relative;
+  width: 100%;
+}
+
+.options__combo .options__input {
+  width: 100%;
+}
+
+/* Аватар в поле выбранного пользователя */
+.options__combo-avatar-slot {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  display: none;
+}
+
+.options__combo--has-avatar .options__combo-avatar-slot {
+  display: block;
+}
+
+.options__combo--has-avatar .options__input {
+  padding-left: 40px;
+}
+
+/* Универсальный аватар (кружок с инициалами и картинкой поверх) */
+.options__avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #c9d6e5;
+  color: #33475b;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.options__avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.options__combo-list {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 240px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.options__combo-list[hidden] {
+  display: none;
+}
+
+.options__combo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  cursor: pointer;
+  line-height: 1.3;
+}
+
+.options__combo-item:hover,
+.options__combo-item[aria-selected="true"] {
+  background: #eef4fb;
+}
+
+.options__combo-item-text {
+  min-width: 0;
+}
+
+.options__combo-item-name {
+  font-weight: 500;
+}
+
+.options__combo-item-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.options__combo-empty {
+  padding: 7px 10px;
+  color: var(--muted);
 }
 
 .options__hint--fieldset {
@@ -221,6 +339,11 @@ body {
 }
 
 #groups-block {
+  display: none;
+}
+
+/* AI временно скрыт — код и разметка сохранены, доработаем позже. */
+#ai-options-form {
   display: none;
 }
 

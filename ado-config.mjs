@@ -18,6 +18,34 @@ export const DEFAULT_ADO_CONFIG = {
    */
   authMode: "session",
   pat: "",
+  /**
+   * Настройки сценария «Создать задачу на ревью».
+   * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`).
+   * `reviewTemplateId` — GUID командного шаблона (work item template), поля которого копируются
+   *   в создаваемую задачу через API. По умолчанию — шаблон «Design review» команды B2B Design System.
+   * `reviewTemplateTeam` — команда, которой принадлежит шаблон (нужна для чтения полей шаблона по API).
+   * `reviewDesignTypes` — типы исходных задач, для которых показывать кнопку (через запятую); пусто — для всех.
+   * `reviewPlaceholderText` — текст-плейсхолдер в разделе «Продуктовая задача» шаблона, который
+   *   заменяется на имя и ссылку исходной задачи (FR-010).
+   * `reviewParentId` — номер родительской задачи; созданная задача привязывается к ней как child
+   *   (связь child → parent). Пусто — родительскую связь не добавлять.
+   * `reviewProductName` — название продукта; добавляется в заголовок задачи на ревью в квадратных
+   *   скобках перед названием исходной задачи (например «[Product] …»). Пусто — не добавлять.
+   * `reviewDesignLead` — строка identity для System.AssignedTo
+   *   («Имя <email>» или «Имя <DOMAIN\\alias>»); если задана, созданная задача
+   *   назначается на этого пользователя. Пусто — не назначать.
+   * `reviewDesignLeadName` — отображаемое имя дизайн-лида (для показа в поле настроек).
+   */
+  reviewWorkItemType: "Review",
+  reviewTemplateId: "251d335a-fe7f-4ac3-afb0-7417eb9e4689",
+  reviewTemplateTeam: "B2B Design System Team",
+  reviewDesignTypes: "",
+  reviewPlaceholderText: "Название и ссылка на задачу",
+  reviewParentId: "7847173",
+  reviewProductName: "",
+  reviewDesignLead: "",
+  reviewDesignLeadName: "",
+  reviewDesignLeadAvatar: "",
 };
 
 export async function loadAdoConfig() {
@@ -28,6 +56,15 @@ export async function loadAdoConfig() {
   const raw = { ...DEFAULT_ADO_CONFIG, ...partial };
   raw.apiVersion = '6.0-preview';
   raw.refreshIntervalMinutes = resolveRefreshIntervalMinutes(raw);
+
+  // Поля сценария «Ревью» без UI — всегда берём из дефолтов (хардкод),
+  // чтобы устаревшие значения из storage их не перекрывали.
+  raw.reviewWorkItemType = DEFAULT_ADO_CONFIG.reviewWorkItemType;
+  raw.reviewTemplateId = DEFAULT_ADO_CONFIG.reviewTemplateId;
+  raw.reviewTemplateTeam = DEFAULT_ADO_CONFIG.reviewTemplateTeam;
+  raw.reviewDesignTypes = DEFAULT_ADO_CONFIG.reviewDesignTypes;
+  raw.reviewPlaceholderText = DEFAULT_ADO_CONFIG.reviewPlaceholderText;
+  raw.reviewParentId = DEFAULT_ADO_CONFIG.reviewParentId;
 
   // Remove deprecated fields
   delete raw.repositoryId;
@@ -61,6 +98,57 @@ export function validateAdoConfig(config) {
   }
 
   return errors;
+}
+
+/**
+ * Валидация настроек сценария «Создать задачу на ревью» (FR-006).
+ * @param {typeof DEFAULT_ADO_CONFIG} config
+ * @returns {string[]} список сообщений об ошибках
+ */
+export function validateReviewConfig(config) {
+  const errors = [];
+
+  if (!String(config?.reviewWorkItemType ?? "").trim()) {
+    errors.push("Укажите тип задачи на ревью (например Review).");
+  }
+
+  if (!String(config?.reviewTemplateId ?? "").trim()) {
+    errors.push("Укажите GUID шаблона задачи на ревью (templateId).");
+  }
+
+  const rawParent = String(config?.reviewParentId ?? "").trim();
+  if (rawParent && parseReviewParentId(rawParent) === null) {
+    errors.push("Номер родительской задачи должен быть положительным целым числом.");
+  }
+
+  return errors;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {number|null} положительное целое или null
+ */
+export function parseReviewParentId(value) {
+  const raw = String(value ?? "").trim();
+
+  if (!/^\d+$/.test(raw)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Разбирает список типов исходных задач для показа кнопки.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function parseReviewDesignTypes(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 export function resolveApiVersion(config) {
