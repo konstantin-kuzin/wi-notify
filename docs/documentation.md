@@ -102,13 +102,13 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `apiVersion` | `6.0-preview` | Нет | При каждом `loadAdoConfig` **принудительно** ставится `6.0-preview` |
 | `authMode` | `session` | Нет | `session` — cookies браузера; `pat` — Basic с PAT |
 | `pat` | `""` | Нет | Токен при `authMode === "pat"` |
-| `reviewProject` | `B2B Design System` | Нет (хардкод) | Проект, в котором всегда создаётся Review |
+| `reviewProject` | `""` | Да | Проект, в котором всегда создаётся Review |
 | `reviewWorkItemType` | `Review` | Нет (хардкод) | Тип создаваемого WI |
-| `reviewTemplateId` | `251d335a-fe7f-4ac3-afb0-7417eb9e4689` | Нет (хардкод) | GUID командного шаблона «Design review» |
-| `reviewTemplateTeam` | `B2B Design System Team` | Нет (хардкод) | Команда-владелец шаблона |
+| `reviewTemplateId` | `""` | Да | GUID командного шаблона; задаётся в настройках |
+| `reviewTemplateTeam` | `""` | Да | Команда-владелец шаблона |
 | `reviewDesignTypes` | `""` | Нет (хардкод) | Типы исходных WI для показа кнопки через запятую; пусто = все типы |
 | `reviewPlaceholderText` | `Название и ссылка на задачу` | Нет (хардкод) | Текст в Description шаблона, заменяемый на ссылку исходной задачи |
-| `reviewParentId` | `7847173` | Нет (хардкод) | Родительская задача; Review привязывается как child |
+| `reviewParentId` | `""` | Да | Родительская задача; Review привязывается как child. Пусто — связь не добавлять |
 | `reviewEnabled` | `true` | Да (тоггл) | Вкл/выкл сценария: раскрытие блока настроек и показ кнопки Design Review Task |
 | `reviewProductName` | `""` | Да | Префикс заголовка `[Продукт] …` |
 | `reviewDesignLead` | `""` | Да (hidden) | Identity для `System.AssignedTo` |
@@ -119,20 +119,16 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 При каждом `loadAdoConfig()` следующие поля **всегда** берутся из `DEFAULT_ADO_CONFIG` и **не** перекрываются устаревшими значениями из storage:
 
-- `reviewProject`
 - `reviewWorkItemType`
-- `reviewTemplateId`
-- `reviewTemplateTeam`
 - `reviewDesignTypes`
 - `reviewPlaceholderText`
-- `reviewParentId`
 
-Чтобы сменить шаблон, родителя, проект ревью или список типов — править [`ado-config.mjs`](../ado-config.mjs) и перезагрузить расширение.
+`reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` хранятся только в `chrome.storage` (страница настроек), в коде дефолты пустые.
 
 ### Валидация
 
 - `validateAdoConfig` — непустые `apiRoot` и `project`; `refreshIntervalMinutes` — целое ≥ 1.
-- `validateReviewConfig` — непустые `reviewProject`, `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
+- `validateReviewConfig` — непустые `reviewProject`, `reviewTemplateTeam`, `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
 
 ---
 
@@ -412,9 +408,9 @@ content-script                     background                      Azure DevOps
 
 1. **Исходная задача** — `fetchWorkItemById`; нужны `System.Title`, тип, проект. Без валидного id или title — ошибка.
 2. **Шаблон** — `GET {reviewProject}/{team}/_apis/wit/templates/{reviewTemplateId}`:
-   - reviewProject = `B2B Design System` (хардкод, не `config.project`);
-   - team = `B2B Design System Team`;
-   - templateId = `251d335a-fe7f-4ac3-afb0-7417eb9e4689`.
+   - reviewProject = `config.reviewProject` (из настроек, не `config.project`);
+   - team = `config.reviewTemplateTeam` (из настроек);
+   - templateId = `config.reviewTemplateId` (из настроек).
    Поля шаблона копируются в create-patch (кроме `System.AreaId`, `System.IterationId` и ключей с суффиксом `-Add`).
 3. **Fallback**, если шаблон недоступен:
    - `KL.SizeSymbol` = `M`;
@@ -429,7 +425,7 @@ content-script                     background                      Azure DevOps
 7. **Создание** — `POST {reviewProject}/_apis/wit/workitems/$Review` с `Content-Type: application/json-patch+json`.
 8. **Связь Related** — `PATCH` на созданный WI в `reviewProject`:  
    `System.LinkTypes.Related` → API URL исходной задачи.
-9. **Связь parent/child** — если `reviewParentId` валиден (`7847173` по умолчанию):  
+9. **Связь parent/child** — если `reviewParentId` валиден (из настроек):  
    `System.LinkTypes.Hierarchy-Reverse` → API URL родителя (созданная Review становится child).
 10. Ошибки связей **не откатывают** создание: возвращаются в массиве `warnings`.
 
@@ -447,9 +443,9 @@ content-script                     background                      Azure DevOps
 ### Ограничения сценария (as is)
 
 - Работает только для **уже сохранённой** WI с номером.
-- Создание идёт через API в фиксированный проект `reviewProject` (`B2B Design System`); предзаполненная UI-форма create не открывается.
+- Создание идёт через API в `reviewProject` из настроек; предзаполненная UI-форма create не открывается.
 - При частичном сбое связей созданная Review **не удаляется** — нужно донастроить вручную.
-- `reviewParentId`, template id/team, типы исходных WI — только в коде (`ado-config.mjs`).
+- `reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` задаются в настройках (в коде не хранятся); типы исходных WI — только в коде (`ado-config.mjs`).
 - Плейсхолдер Pixso в Description захардкожен в `ado-api.mjs`, не в конфиге.
 - Content-script читает `adoConfig` из storage напрямую (для фильтра типов); хардкод типов всё равно обеспечивается `loadAdoConfig` в service worker.
 - В ответе `title` сейчас равен заголовку **исходной** задачи, а не итоговому Title Review (с префиксом продукта).

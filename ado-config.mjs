@@ -23,16 +23,17 @@ export const DEFAULT_ADO_CONFIG = {
    * `reviewEnabled` — включать ли сценарий: тоггл в настройках; при `false` блок свёрнут
    *   и кнопка Design Review Task на форме WI не показывается.
    * `reviewProject` — Team Project, в котором всегда создаётся задача на ревью
-   *   (независимо от `project` в основных настройках / проекта исходной WI).
-   * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`).
+   *   (независимо от `project` в основных настройках / проекта исходной WI). Редактируется в настройках.
+   * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`). Без UI.
    * `reviewTemplateId` — GUID командного шаблона (work item template), поля которого копируются
-   *   в создаваемую задачу через API. По умолчанию — шаблон «Design review» команды B2B Design System.
+   *   в создаваемую задачу через API. Редактируется в настройках.
    * `reviewTemplateTeam` — команда, которой принадлежит шаблон (нужна для чтения полей шаблона по API).
-   * `reviewDesignTypes` — типы исходных задач, для которых показывать кнопку (через запятую); пусто — для всех.
+   *   Редактируется в настройках.
+   * `reviewDesignTypes` — типы исходных задач, для которых показывать кнопку (через запятую); пусто — для всех. Без UI.
    * `reviewPlaceholderText` — текст-плейсхолдер в разделе «Продуктовая задача» шаблона, который
-   *   заменяется на имя и ссылку исходной задачи (FR-010).
+   *   заменяется на имя и ссылку исходной задачи (FR-010). Без UI.
    * `reviewParentId` — номер родительской задачи; созданная задача привязывается к ней как child
-   *   (связь child → parent). Пусто — родительскую связь не добавлять.
+   *   (связь child → parent). Пусто — родительскую связь не добавлять. Редактируется в настройках.
    * `reviewProductName` — название продукта; добавляется в заголовок задачи на ревью в квадратных
    *   скобках перед названием исходной задачи (например «[Product] …»). Пусто — не добавлять.
    * `reviewDesignLead` — строка identity для System.AssignedTo
@@ -41,13 +42,13 @@ export const DEFAULT_ADO_CONFIG = {
    * `reviewDesignLeadName` — отображаемое имя дизайн-лида (для показа в поле настроек).
    */
   reviewEnabled: true,
-  reviewProject: "B2B Design System",
+  reviewProject: "",
+  reviewTemplateTeam: "",
   reviewWorkItemType: "Review",
-  reviewTemplateId: "251d335a-fe7f-4ac3-afb0-7417eb9e4689",
-  reviewTemplateTeam: "B2B Design System Team",
+  reviewTemplateId: "",
   reviewDesignTypes: "",
   reviewPlaceholderText: "Название и ссылка на задачу",
-  reviewParentId: "7847173",
+  reviewParentId: "",
   reviewProductName: "",
   reviewDesignLead: "",
   reviewDesignLeadName: "",
@@ -65,13 +66,9 @@ export async function loadAdoConfig() {
 
   // Поля сценария «Ревью» без UI — всегда берём из дефолтов (хардкод),
   // чтобы устаревшие значения из storage их не перекрывали.
-  raw.reviewProject = DEFAULT_ADO_CONFIG.reviewProject;
   raw.reviewWorkItemType = DEFAULT_ADO_CONFIG.reviewWorkItemType;
-  raw.reviewTemplateId = DEFAULT_ADO_CONFIG.reviewTemplateId;
-  raw.reviewTemplateTeam = DEFAULT_ADO_CONFIG.reviewTemplateTeam;
   raw.reviewDesignTypes = DEFAULT_ADO_CONFIG.reviewDesignTypes;
   raw.reviewPlaceholderText = DEFAULT_ADO_CONFIG.reviewPlaceholderText;
-  raw.reviewParentId = DEFAULT_ADO_CONFIG.reviewParentId;
 
   // Remove deprecated fields
   delete raw.repositoryId;
@@ -116,7 +113,11 @@ export function validateReviewConfig(config) {
   const errors = [];
 
   if (!String(config?.reviewProject ?? "").trim()) {
-    errors.push("Укажите проект для задач на ревью (например B2B Design System).");
+    errors.push("Укажите проект для задач на ревью.");
+  }
+
+  if (!String(config?.reviewTemplateTeam ?? "").trim()) {
+    errors.push("Укажите команду шаблона задачи на ревью.");
   }
 
   if (!String(config?.reviewWorkItemType ?? "").trim()) {

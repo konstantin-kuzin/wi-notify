@@ -31,6 +31,10 @@ const reviewDesignLeadValueInput = document.querySelector("#review-design-lead-v
 const reviewDesignLeadNameInput = document.querySelector("#review-design-lead-name");
 const reviewDesignLeadAvatarInput = document.querySelector("#review-design-lead-avatar");
 const reviewDesignLeadAvatarSlot = document.querySelector("#review-design-lead-avatar-slot");
+const reviewParentIdInput = document.querySelector("#review-parent-id");
+const reviewProjectInput = document.querySelector("#review-project");
+const reviewTemplateTeamInput = document.querySelector("#review-template-team");
+const reviewTemplateIdInput = document.querySelector("#review-template-id");
 const saveReviewButton = document.querySelector("#save-review-button");
 const saveReviewStatus = document.querySelector("#save-review-status");
 
@@ -76,6 +80,10 @@ async function init() {
   reviewDesignLeadNameInput.value = config.reviewDesignLeadName ?? DEFAULT_ADO_CONFIG.reviewDesignLeadName;
   reviewDesignLeadAvatarInput.value = config.reviewDesignLeadAvatar ?? DEFAULT_ADO_CONFIG.reviewDesignLeadAvatar;
   reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
+  reviewParentIdInput.value = config.reviewParentId ?? DEFAULT_ADO_CONFIG.reviewParentId;
+  reviewProjectInput.value = config.reviewProject ?? DEFAULT_ADO_CONFIG.reviewProject;
+  reviewTemplateTeamInput.value = config.reviewTemplateTeam ?? DEFAULT_ADO_CONFIG.reviewTemplateTeam;
+  reviewTemplateIdInput.value = config.reviewTemplateId ?? DEFAULT_ADO_CONFIG.reviewTemplateId;
   updateDesignLeadFieldAvatar();
   setupDesignLeadCombo();
 
@@ -196,14 +204,14 @@ async function handleReviewSubmit() {
     reviewDesignLead: reviewDesignLeadValueInput.value.trim(),
     reviewDesignLeadName: reviewDesignLeadNameInput.value.trim(),
     reviewDesignLeadAvatar: reviewDesignLeadAvatarInput.value.trim(),
+    reviewParentId: reviewParentIdInput.value.trim(),
+    reviewProject: reviewProjectInput.value.trim(),
+    reviewTemplateTeam: reviewTemplateTeamInput.value.trim(),
+    reviewTemplateId: reviewTemplateIdInput.value.trim(),
     // Поля без UI — хранятся хардкодом из дефолтов конфига.
-    reviewProject: DEFAULT_ADO_CONFIG.reviewProject,
     reviewWorkItemType: DEFAULT_ADO_CONFIG.reviewWorkItemType,
-    reviewTemplateId: DEFAULT_ADO_CONFIG.reviewTemplateId,
-    reviewTemplateTeam: DEFAULT_ADO_CONFIG.reviewTemplateTeam,
     reviewDesignTypes: DEFAULT_ADO_CONFIG.reviewDesignTypes,
     reviewPlaceholderText: DEFAULT_ADO_CONFIG.reviewPlaceholderText,
-    reviewParentId: DEFAULT_ADO_CONFIG.reviewParentId,
   };
 
   const errors = validateReviewConfig(merged);

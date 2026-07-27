@@ -1326,7 +1326,7 @@ export async function createReviewWorkItem(config, source) {
     body: JSON.stringify(patch),
   };
 
-  // FR-007: создание work item типа Review всегда в reviewProject (B2B Design System).
+  // FR-007: создание work item типа Review всегда в reviewProject из настроек.
   let created;
   const warnings = [];
   try {

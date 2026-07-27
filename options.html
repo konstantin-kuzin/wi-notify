@@ -31,7 +31,7 @@
         <label class="options__field">
           <span class="options__label">Проект</span>
           <input class="options__input" id="project" name="project" type="text" required>
-          <span class="options__hint">Например, B2B Design System</span>
+          <span class="options__hint">Например, Monorepo</span>
         </label>
 
         <label class="options__field">
@@ -122,6 +122,62 @@
               <input type="hidden" id="review-design-lead-avatar">
               <span class="options__hint">Поиск среди пользователей. Если указан, задача на ревью назначается на этого пользователя. Очистите поле, чтобы не назначать.</span>
             </div>
+
+            <label class="options__field">
+              <span class="options__label">Родительская задача</span>
+              <input
+                class="options__input"
+                id="review-parent-id"
+                name="reviewParentId"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="Например: 1234567"
+              >
+              <span class="options__hint">Номер родительской WI; созданная задача на ревью привязывается к ней как child. Пусто — связь не добавлять.</span>
+            </label>
+
+            <label class="options__field">
+              <span class="options__label">Проект для ревью</span>
+              <input
+                class="options__input"
+                id="review-project"
+                name="reviewProject"
+                type="text"
+                autocomplete="off"
+                placeholder="Название Team Project"
+                required
+              >
+              <span class="options__hint">Team Project, в котором создаётся задача на ревью (независимо от проекта в основных настройках).</span>
+            </label>
+
+            <label class="options__field">
+              <span class="options__label">Команда шаблона</span>
+              <input
+                class="options__input"
+                id="review-template-team"
+                name="reviewTemplateTeam"
+                type="text"
+                autocomplete="off"
+                placeholder="Название команды"
+                required
+              >
+              <span class="options__hint">Команда-владелец шаблона work item; нужна для чтения полей шаблона по API.</span>
+            </label>
+
+            <label class="options__field">
+              <span class="options__label">GUID шаблона</span>
+              <input
+                class="options__input"
+                id="review-template-id"
+                name="reviewTemplateId"
+                type="text"
+                autocomplete="off"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                required
+              >
+              <span class="options__hint">GUID командного шаблона work item, поля которого копируются в создаваемую задачу на ревью.</span>
+            </label>
 
             <div class="options__actions">
               <button class="options__button" type="button" id="save-review-button">Сохранить настройки ревью</button>
