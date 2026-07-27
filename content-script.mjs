@@ -816,8 +816,8 @@ function shouldShowReviewButton() {
 
   const type = getSourceWorkItemType();
   if (!type) {
-    // Тип не удалось определить — поведение по умолчанию: показывать.
-    return true;
+    // Тип не удалось определить при заданном белом списке — не показывать.
+    return false;
   }
 
   return allowedTypes.some((allowed) => allowed.toLowerCase() === type.toLowerCase());

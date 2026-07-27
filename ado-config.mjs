@@ -29,7 +29,8 @@ export const DEFAULT_ADO_CONFIG = {
    *   в создаваемую задачу через API. Редактируется в настройках.
    * `reviewTemplateTeam` — команда, которой принадлежит шаблон (нужна для чтения полей шаблона по API).
    *   Редактируется в настройках.
-   * `reviewDesignTypes` — типы исходных задач, для которых показывать кнопку (через запятую); пусто — для всех. Без UI.
+   * `reviewDesignTypes` — типы исходных задач, для которых показывать кнопку (через запятую);
+   *   например `Task,Mockup`. Пусто — для всех. Без UI.
    * `reviewPlaceholderText` — текст-плейсхолдер в разделе «Продуктовая задача» шаблона, который
    *   заменяется на имя и ссылку исходной задачи (FR-010). Без UI.
    * `reviewParentId` — номер родительской задачи; созданная задача привязывается к ней как child
@@ -46,7 +47,7 @@ export const DEFAULT_ADO_CONFIG = {
   reviewTemplateTeam: "",
   reviewWorkItemType: "Review",
   reviewTemplateId: "",
-  reviewDesignTypes: "",
+  reviewDesignTypes: "Task,Mockup",
   reviewPlaceholderText: "Название и ссылка на задачу",
   reviewParentId: "",
   reviewProductName: "",
