@@ -45,6 +45,7 @@ export async function addWorkItemEffortToCurrentWeek(options) {
     date: targetDate,
   });
 
+  // Сервер иногда применяет запись с задержкой — ждём подтверждения, но выходим сразу при успехе.
   const afterValue = await verifySavedValueWithRetry({
     root,
     account,
@@ -52,14 +53,12 @@ export async function addWorkItemEffortToCurrentWeek(options) {
     workItemId,
     dayKey,
     activity,
+    expectedValue: targetValue,
     retries: 6,
-    delayMs: 450,
+    delayMs: 300,
   });
-  const expectedValue = targetValue;
 
-  // Сервер иногда применяет запись с задержкой и/или внутренним округлением.
-  // Считаем успехом любой рост значения за день по задаче.
-  if (afterValue < expectedValue - 0.001) {
+  if (afterValue < targetValue - 0.001) {
     throw new Error("TimeSheet не применил изменения. Сервер принял запрос, но не сохранил запись.");
   }
 
@@ -303,6 +302,8 @@ function pickActivityForSave(task) {
 async function verifySavedValueWithRetry(params) {
   const retries = Number(params.retries) || 1;
   const delayMs = Number(params.delayMs) || 0;
+  const expectedValue = Number(params.expectedValue);
+  const hasExpected = Number.isFinite(expectedValue);
   let lastValue = 0;
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -317,6 +318,10 @@ async function verifySavedValueWithRetry(params) {
       lastValue = getWorkItemDayTotal(timesheet, params.workItemId, params.dayKey);
     } else {
       lastValue = getWorkItemDayValueForEmptyActivity(timesheet, params.workItemId, params.dayKey);
+    }
+
+    if (hasExpected && lastValue >= expectedValue - 0.001) {
+      return lastValue;
     }
 
     if (attempt < retries - 1) {
