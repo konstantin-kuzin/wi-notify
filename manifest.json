@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WI Notify",
   "description": "Показывает work items, назначенные текущему пользователю в Azure DevOps",
-"version": "0.3.5",
+"version": "0.3.6",
   "minimum_chrome_version": "116",
   "permissions": ["alarms", "storage", "notifications", "clipboardRead"],
   "host_permissions": [

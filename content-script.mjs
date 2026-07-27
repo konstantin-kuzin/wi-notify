@@ -39,6 +39,10 @@ function isVisible(element) {
 }
 
 function findDescriptionEditor() {
+  if (!AI_FEATURES_ENABLED) {
+    return null;
+  }
+
   for (const selector of DESCRIPTION_EDITOR_SELECTORS) {
     const candidate = document.querySelector(selector);
     if (!candidate) {
@@ -85,7 +89,7 @@ function findDescriptionEditor() {
     }
   }
 
-  console.warn(`${LOG_PREFIX} Description editor not found.`);
+  // Отсутствие редактора — нормально (поле ещё не смонтировано / другой layout WI).
   return null;
 }
 
@@ -100,9 +104,12 @@ function findDescriptionSectionRoot() {
 }
 
 function findDescriptionToolbarHost() {
+  if (!AI_FEATURES_ENABLED) {
+    return null;
+  }
+
   const sectionRoot = findDescriptionSectionRoot();
   if (!sectionRoot) {
-    console.warn(`${LOG_PREFIX} Description section root not found.`);
     return null;
   }
 
@@ -121,7 +128,6 @@ function findDescriptionToolbarHost() {
     }
   }
 
-  console.warn(`${LOG_PREFIX} Description toolbar host not found in Description section.`);
   return null;
 }
 
@@ -1488,7 +1494,9 @@ function scheduleUiMount() {
 
     isMutatingUi = true;
     try {
-      addAiButtonToDescriptionToolbar();
+      if (AI_FEATURES_ENABLED) {
+        addAiButtonToDescriptionToolbar();
+      }
       addReviewButton();
     } finally {
       isMutatingUi = false;
@@ -1506,30 +1514,34 @@ const observer = new MutationObserver(() => {
 
 observer.observe(document.body, { childList: true, subtree: true });
 
-document.addEventListener("focusin", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
+if (AI_FEATURES_ENABLED) {
+  document.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
 
-  const descriptionEditor = findDescriptionEditor();
-  if (!descriptionEditor) {
-    return;
-  }
+    const descriptionEditor = findDescriptionEditor();
+    if (!descriptionEditor) {
+      return;
+    }
 
-  if (target === descriptionEditor || descriptionEditor.contains(target)) {
-    scheduleUiMount();
-  }
-});
+    if (target === descriptionEditor || descriptionEditor.contains(target)) {
+      scheduleUiMount();
+    }
+  });
+}
 
 // Initial check in case the toolbar is already present
 loadReviewConfigCache();
 scheduleUiMount();
 
-void pingAiBackground()
-  .then((response) => {
-    console.log(`${LOG_PREFIX} ai-ping response received.`, response);
-  })
-  .catch((error) => {
-    console.error(`${LOG_PREFIX} ai-ping failed on content-script startup.`, error);
-  });
+if (AI_FEATURES_ENABLED) {
+  void pingAiBackground()
+    .then((response) => {
+      console.log(`${LOG_PREFIX} ai-ping response received.`, response);
+    })
+    .catch((error) => {
+      console.error(`${LOG_PREFIX} ai-ping failed on content-script startup.`, error);
+    });
+}
