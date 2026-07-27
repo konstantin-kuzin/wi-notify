@@ -102,6 +102,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `apiVersion` | `6.0-preview` | Нет | При каждом `loadAdoConfig` **принудительно** ставится `6.0-preview` |
 | `authMode` | `session` | Нет | `session` — cookies браузера; `pat` — Basic с PAT |
 | `pat` | `""` | Нет | Токен при `authMode === "pat"` |
+| `reviewProject` | `B2B Design System` | Нет (хардкод) | Проект, в котором всегда создаётся Review |
 | `reviewWorkItemType` | `Review` | Нет (хардкод) | Тип создаваемого WI |
 | `reviewTemplateId` | `251d335a-fe7f-4ac3-afb0-7417eb9e4689` | Нет (хардкод) | GUID командного шаблона «Design review» |
 | `reviewTemplateTeam` | `B2B Design System Team` | Нет (хардкод) | Команда-владелец шаблона |
@@ -117,6 +118,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 При каждом `loadAdoConfig()` следующие поля **всегда** берутся из `DEFAULT_ADO_CONFIG` и **не** перекрываются устаревшими значениями из storage:
 
+- `reviewProject`
 - `reviewWorkItemType`
 - `reviewTemplateId`
 - `reviewTemplateTeam`
@@ -124,12 +126,12 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 - `reviewPlaceholderText`
 - `reviewParentId`
 
-Чтобы сменить шаблон, родителя или список типов — править [`ado-config.mjs`](../ado-config.mjs) и перезагрузить расширение.
+Чтобы сменить шаблон, родителя, проект ревью или список типов — править [`ado-config.mjs`](../ado-config.mjs) и перезагрузить расширение.
 
 ### Валидация
 
 - `validateAdoConfig` — непустые `apiRoot` и `project`; `refreshIntervalMinutes` — целое ≥ 1.
-- `validateReviewConfig` — непустые `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
+- `validateReviewConfig` — непустые `reviewProject`, `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
 
 ---
 
@@ -406,7 +408,8 @@ content-script                     background                      Azure DevOps
 ### Что делает `createReviewWorkItem`
 
 1. **Исходная задача** — `fetchWorkItemById`; нужны `System.Title`, тип, проект. Без валидного id или title — ошибка.
-2. **Шаблон** — `GET {project}/{team}/_apis/wit/templates/{reviewTemplateId}`:
+2. **Шаблон** — `GET {reviewProject}/{team}/_apis/wit/templates/{reviewTemplateId}`:
+   - reviewProject = `B2B Design System` (хардкод, не `config.project`);
    - team = `B2B Design System Team`;
    - templateId = `251d335a-fe7f-4ac3-afb0-7417eb9e4689`.
    Поля шаблона копируются в create-patch (кроме `System.AreaId`, `System.IterationId` и ключей с суффиксом `-Add`).
@@ -420,8 +423,8 @@ content-script                     background                      Azure DevOps
      `<a href="{url}">{type} {id}</a>: {title}`;
    - если плейсхолдера нет — блок «Продуктовая задача» добавляется в начало;
    - при наличии pixsoUrl — замена плейсхолдера раздела «Макеты» (см. выше).
-7. **Создание** — `POST {project}/_apis/wit/workitems/$Review` с `Content-Type: application/json-patch+json`.
-8. **Связь Related** — `PATCH` на созданный WI:  
+7. **Создание** — `POST {reviewProject}/_apis/wit/workitems/$Review` с `Content-Type: application/json-patch+json`.
+8. **Связь Related** — `PATCH` на созданный WI в `reviewProject`:  
    `System.LinkTypes.Related` → API URL исходной задачи.
 9. **Связь parent/child** — если `reviewParentId` валиден (`7847173` по умолчанию):  
    `System.LinkTypes.Hierarchy-Reverse` → API URL родителя (созданная Review становится child).
@@ -441,7 +444,7 @@ content-script                     background                      Azure DevOps
 ### Ограничения сценария (as is)
 
 - Работает только для **уже сохранённой** WI с номером.
-- Создание идёт через API; предзаполненная UI-форма create не открывается.
+- Создание идёт через API в фиксированный проект `reviewProject` (`B2B Design System`); предзаполненная UI-форма create не открывается.
 - При частичном сбое связей созданная Review **не удаляется** — нужно донастроить вручную.
 - `reviewParentId`, template id/team, типы исходных WI — только в коде (`ado-config.mjs`).
 - Плейсхолдер Pixso в Description захардкожен в `ado-api.mjs`, не в конфиге.

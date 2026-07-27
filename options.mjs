@@ -185,6 +185,7 @@ async function handleReviewSubmit() {
     reviewDesignLeadName: reviewDesignLeadNameInput.value.trim(),
     reviewDesignLeadAvatar: reviewDesignLeadAvatarInput.value.trim(),
     // Поля без UI — хранятся хардкодом из дефолтов конфига.
+    reviewProject: DEFAULT_ADO_CONFIG.reviewProject,
     reviewWorkItemType: DEFAULT_ADO_CONFIG.reviewWorkItemType,
     reviewTemplateId: DEFAULT_ADO_CONFIG.reviewTemplateId,
     reviewTemplateTeam: DEFAULT_ADO_CONFIG.reviewTemplateTeam,

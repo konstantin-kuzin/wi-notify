@@ -2,6 +2,7 @@ import {
   normalizeApiRoot,
   parseReviewParentId,
   resolveApiVersion,
+  resolveReviewProject,
 } from "./ado-config.mjs";
 
 const MAX_RETRIES = 2;
@@ -53,12 +54,27 @@ export async function adoFetch(config, pathAndQuery, init = {}) {
   let lastError = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      credentials: config.authMode === "session" ? "include" : "omit",
-      cache: "no-store",
-    });
+    let response;
+
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        credentials: config.authMode === "session" ? "include" : "omit",
+        cache: "no-store",
+      });
+    } catch (error) {
+      lastError = error instanceof Error
+        ? error
+        : new Error(String(error ?? "Запрос к Azure DevOps не выполнен."));
+
+      if (attempt < MAX_RETRIES) {
+        await delay(RETRY_BASE_MS * 2 ** attempt);
+        continue;
+      }
+
+      throw lastError;
+    }
 
     if (response.status === 429 && attempt < MAX_RETRIES) {
       await delay(RETRY_BASE_MS * 2 ** attempt);
@@ -219,29 +235,30 @@ export async function fetchConnectionIdentity(config) {
  * Собирает unique name, который ADO принимает в System.AssignedTo.
  * Нельзя подставлять голый samAccountName в «Имя <alias>» — сервер вернёт 400.
  *
- * Приоритет: email → DOMAIN\alias → пусто (тогда оставляем только displayName).
+ * На on-prem TFS email часто «unknown identity»; приоритет:
+ * DOMAIN\alias → email → пусто (тогда оставляем только displayName).
  * @param {Record<string, unknown>} item
  * @returns {string}
  */
 function resolveIdentityUniqueName(item) {
-  const mail = normalizeText(item?.mail || item?.signInAddress);
-  if (mail.includes("@")) {
-    return mail;
-  }
-
   const sam = normalizeText(
     item?.samAccountName || item?.accountName || item?.account,
   );
   const domain = normalizeText(item?.domain || item?.scopeName);
 
   // On-prem Windows identity: DOMAIN\alias
-  if (sam && domain && domain.includes("\\") === false && !domain.includes("@")) {
+  if (sam && domain && !domain.includes("\\") && !domain.includes("@")) {
     return `${domain}\\${sam}`;
   }
 
   // Уже готовый unique name вида DOMAIN\alias
   if (sam.includes("\\")) {
     return sam;
+  }
+
+  const mail = normalizeText(item?.mail || item?.signInAddress);
+  if (mail.includes("@")) {
+    return mail;
   }
 
   return "";
@@ -280,8 +297,8 @@ function normalizeAssignedToIdentity(raw) {
   const displayName = normalizeText(match[1]);
   const uniqueName = normalizeText(match[2]);
 
-  // Валидный unique name: email или DOMAIN\alias
-  if (uniqueName.includes("@") || uniqueName.includes("\\")) {
+  // Валидный unique name: DOMAIN\alias или email
+  if (uniqueName.includes("\\") || uniqueName.includes("@")) {
     return buildAssignedToValue(displayName, uniqueName);
   }
 
@@ -290,8 +307,175 @@ function normalizeAssignedToIdentity(raw) {
 }
 
 /**
+ * Готовит Assigned To для дизайн-лида.
+ * Если в storage лежит email-формат (часто unknown на on-prem),
+ * перезапрашивает identity API и предпочитает DOMAIN\alias.
+ * Если резолв не удался — возвращает display name (без email).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<string>}
+ */
+async function resolveDesignLeadAssignedTo(config) {
+  const stored = normalizeAssignedToIdentity(config.reviewDesignLead);
+  if (!stored) {
+    return "";
+  }
+
+  const match = stored.match(/^(.*)<([^>]+)>\s*$/);
+  const displayName = match ? normalizeText(match[1]) : normalizeText(stored);
+  const uniqueName = match ? normalizeText(match[2]) : "";
+
+  // Уже DOMAIN\alias — оставляем как есть.
+  if (uniqueName.includes("\\")) {
+    return stored;
+  }
+
+  const query = displayName || uniqueName;
+  if (query.length >= 2) {
+    try {
+      const results = await searchIdentities(config, query);
+      const resolved = pickBestIdentityMatch(results, displayName, uniqueName);
+
+      if (resolved?.assignedTo) {
+        // Если снова пришёл только email — для on-prem надёжнее display name.
+        if (resolved.uniqueName.includes("\\")) {
+          return resolved.assignedTo;
+        }
+        if (resolved.displayName) {
+          return resolved.displayName;
+        }
+        return resolved.assignedTo;
+      }
+    } catch (error) {
+      logAdoError("resolveDesignLeadAssignedTo", error);
+    }
+  }
+
+  // Email в Assigned To на on-prem часто даёт 400 unknown identity.
+  if (uniqueName.includes("@")) {
+    return displayName || stored;
+  }
+
+  return stored;
+}
+
+/**
+ * @param {Array<{ displayName: string, uniqueName: string, assignedTo: string }>} results
+ * @param {string} displayName
+ * @param {string} uniqueName
+ */
+function pickBestIdentityMatch(results, displayName, uniqueName) {
+  if (!Array.isArray(results) || !results.length) {
+    return null;
+  }
+
+  const displayLower = displayName.toLowerCase();
+  const uniqueLower = uniqueName.toLowerCase();
+
+  const exact = results.find((item) => {
+    const itemDisplay = normalizeText(item?.displayName).toLowerCase();
+    const itemUnique = normalizeText(item?.uniqueName).toLowerCase();
+    return (displayLower && itemDisplay === displayLower)
+      || (uniqueLower && itemUnique === uniqueLower)
+      || (uniqueLower && itemUnique.includes(uniqueLower));
+  });
+
+  if (exact) {
+    return exact;
+  }
+
+  // Предпочитаем результат с DOMAIN\alias.
+  return results.find((item) => String(item?.uniqueName ?? "").includes("\\"))
+    ?? results[0];
+}
+
+/**
+ * Читает строковое свойство identity (plain или `{ $value }`).
+ * @param {Record<string, unknown>} properties
+ * @param {string} key
+ */
+function readIdentityProperty(properties, key) {
+  const raw = properties?.[key];
+  if (raw && typeof raw === "object" && "$value" in raw) {
+    return normalizeText(raw.$value);
+  }
+  return normalizeText(raw);
+}
+
+/**
+ * Запасной поиск пользователей через REST Identities (если Identity Picker недоступен).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} query
+ */
+async function searchIdentitiesViaIdentitiesApi(config, query) {
+  const attempts = query.includes("@")
+    ? [["MailAddress", query], ["General", query]]
+    : [["General", query]];
+
+  const root = normalizeApiRoot(config.apiRoot);
+  const results = [];
+  const seen = new Set();
+
+  for (const [searchFilter, filterValue] of attempts) {
+    const params = new URLSearchParams({
+      searchFilter,
+      filterValue,
+      "api-version": "6.0",
+    });
+
+    let data;
+    try {
+      data = await adoFetch(config, `_apis/identities?${params.toString()}`);
+    } catch (error) {
+      logAdoError(`searchIdentities:identities:${searchFilter}`, error);
+      continue;
+    }
+
+    for (const item of Array.isArray(data?.value) ? data.value : []) {
+      const key = String(item?.descriptor || item?.id || "");
+      if (key) {
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+      }
+
+      const properties = item?.properties && typeof item.properties === "object"
+        ? item.properties
+        : {};
+      const displayName = normalizeText(
+        item?.customDisplayName || item?.providerDisplayName,
+      );
+      const uniqueName = resolveIdentityUniqueName({
+        mail: readIdentityProperty(properties, "Mail")
+          || readIdentityProperty(properties, "MailAddress"),
+        signInAddress: readIdentityProperty(properties, "SignInAddress"),
+        samAccountName: readIdentityProperty(properties, "Account")
+          || readIdentityProperty(properties, "SamAccountName"),
+        accountName: readIdentityProperty(properties, "Account"),
+        domain: readIdentityProperty(properties, "Domain"),
+      });
+      const assignedTo = buildAssignedToValue(displayName, uniqueName);
+      let avatarUrl = "";
+      if (item?.id) {
+        avatarUrl = `${root}/_api/_common/identityImage?id=${encodeURIComponent(item.id)}`;
+      }
+
+      if (displayName || uniqueName) {
+        results.push({ displayName, uniqueName, assignedTo, avatarUrl });
+      }
+    }
+
+    if (results.length) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+/**
  * Ищет пользователей ADO по строке (для выбора «Дизайн-лида»).
- * Использует Identity Picker — тот же сервис, что и веб-интерфейс ADO.
+ * Сначала Identity Picker, при сбое/пустом ответе — REST Identities.
  *
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
  * @param {string} query
@@ -321,42 +505,51 @@ export async function searchIdentities(config, query) {
     options: { MinResults: 5, MaxResults: 20 },
   };
 
-  const data = await adoFetch(
-    config,
-    `_apis/IdentityPicker/Identities?${search.toString()}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
+  try {
+    const data = await adoFetch(
+      config,
+      `_apis/IdentityPicker/Identities?${search.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
 
-  const identities = data?.results?.[0]?.identities ?? [];
-  const root = normalizeApiRoot(config.apiRoot);
+    const identities = data?.results?.[0]?.identities ?? [];
+    const root = normalizeApiRoot(config.apiRoot);
 
-  return identities
-    .map((item) => {
-      const displayName = normalizeText(item?.displayName);
-      const uniqueName = resolveIdentityUniqueName(item);
-      const assignedTo = buildAssignedToValue(displayName, uniqueName);
+    const mapped = identities
+      .map((item) => {
+        const displayName = normalizeText(item?.displayName);
+        const uniqueName = resolveIdentityUniqueName(item);
+        const assignedTo = buildAssignedToValue(displayName, uniqueName);
 
-      // Аватар: используем image из ответа либо классический endpoint IdentityImage по id.
-      const rawImage = normalizeText(item?.image);
-      let avatarUrl = "";
-      if (rawImage) {
-        avatarUrl = rawImage.startsWith("http")
-          ? rawImage
-          : `${root}/${rawImage.replace(/^\//, "")}`;
-      } else {
-        const avatarId = item?.localId || item?.entityId || item?.originId;
-        if (avatarId) {
-          avatarUrl = `${root}/_api/_common/identityImage?id=${encodeURIComponent(avatarId)}`;
+        const rawImage = normalizeText(item?.image);
+        let avatarUrl = "";
+        if (rawImage) {
+          avatarUrl = rawImage.startsWith("http")
+            ? rawImage
+            : `${root}/${rawImage.replace(/^\//, "")}`;
+        } else {
+          const avatarId = item?.localId || item?.entityId || item?.originId;
+          if (avatarId) {
+            avatarUrl = `${root}/_api/_common/identityImage?id=${encodeURIComponent(avatarId)}`;
+          }
         }
-      }
 
-      return { displayName, uniqueName, assignedTo, avatarUrl };
-    })
-    .filter((item) => item.displayName || item.uniqueName);
+        return { displayName, uniqueName, assignedTo, avatarUrl };
+      })
+      .filter((item) => item.displayName || item.uniqueName);
+
+    if (mapped.length) {
+      return mapped;
+    }
+  } catch (error) {
+    logAdoError("searchIdentities:picker", error);
+  }
+
+  return searchIdentitiesViaIdentitiesApi(config, q);
 }
 
 /**
@@ -980,6 +1173,9 @@ function escapeAdoHtml(value) {
 const TEMPLATE_SKIP_FIELDS = new Set([
   "System.AreaId",
   "System.IterationId",
+  // Assigned To задаём только из настроек дизайн-лида; значение из шаблона
+  // часто не резолвится на on-prem и валит создание с HTTP 400.
+  "System.AssignedTo",
 ]);
 
 /**
@@ -995,7 +1191,7 @@ async function fetchReviewTemplateFields(config) {
     return null;
   }
 
-  const project = encodeURIComponent(config.project.trim());
+  const project = encodeURIComponent(resolveReviewProject(config));
   const teamSeg = encodeURIComponent(team);
   const query = new URLSearchParams({
     "api-version": resolveApiVersion(config),
@@ -1098,9 +1294,9 @@ export async function createReviewWorkItem(config, source) {
   createFields["System.Title"] = productName ? `[${productName}] ${sourceTitle}` : sourceTitle;
 
   // Если указан дизайн-лид — назначаем задачу на него.
-  // В storage мог остаться старый битый формат «Имя <samAccount>» без домена —
-  // ADO такое отклоняет, поэтому нормализуем.
-  const designLead = normalizeAssignedToIdentity(config.reviewDesignLead);
+  // В storage мог остаться email-формат, который on-prem TFS не принимает —
+  // перезапрашиваем Identity Picker и предпочитаем DOMAIN\alias.
+  const designLead = await resolveDesignLeadAssignedTo(config);
   if (designLead) {
     createFields["System.AssignedTo"] = designLead;
   }
@@ -1115,24 +1311,93 @@ export async function createReviewWorkItem(config, source) {
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
 
-  const project = encodeURIComponent(config.project.trim());
+  const reviewProject = resolveReviewProject(config);
+  const project = encodeURIComponent(reviewProject);
   const typeSeg = `$${encodeURIComponent(type)}`;
   const query = new URLSearchParams({
     "api-version": resolveApiVersion(config),
   });
 
-  // FR-007: создание work item типа Review.
-  const created = await adoFetch(
-    config,
-    `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json-patch+json",
-      },
-      body: JSON.stringify(patch),
+  const createOptions = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json-patch+json",
     },
-  );
+    body: JSON.stringify(patch),
+  };
+
+  // FR-007: создание work item типа Review всегда в reviewProject (B2B Design System).
+  let created;
+  const warnings = [];
+  try {
+    created = await adoFetch(
+      config,
+      `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+      createOptions,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const assignedToUnknown = /unknown identity/i.test(message)
+      && /Assigned To/i.test(message)
+      && createFields["System.AssignedTo"];
+
+    if (!assignedToUnknown) {
+      throw error;
+    }
+
+    logAdoError("createReviewWorkItem:assignedTo", error);
+
+    const assignedCandidates = [];
+    const failedAssignedTo = String(createFields["System.AssignedTo"]);
+    const nameOnlyMatch = failedAssignedTo.match(/^(.*)<[^>]+>\s*$/);
+    const nameOnly = nameOnlyMatch ? normalizeText(nameOnlyMatch[1]) : "";
+    if (nameOnly && nameOnly !== failedAssignedTo) {
+      assignedCandidates.push(nameOnly);
+    }
+
+    let assignedFixed = false;
+    for (const candidate of assignedCandidates) {
+      createFields["System.AssignedTo"] = candidate;
+      const retryPatch = Object.entries(createFields)
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+
+      try {
+        created = await adoFetch(
+          config,
+          `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+          {
+            ...createOptions,
+            body: JSON.stringify(retryPatch),
+          },
+        );
+        assignedFixed = true;
+        break;
+      } catch (retryError) {
+        logAdoError("createReviewWorkItem:assignedToRetry", retryError);
+      }
+    }
+
+    if (!assignedFixed) {
+      // Identity не резолвится — создаём без Assigned To (ADO назначит создателя).
+      delete createFields["System.AssignedTo"];
+      const patchWithoutAssignee = Object.entries(createFields)
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+
+      created = await adoFetch(
+        config,
+        `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+        {
+          ...createOptions,
+          body: JSON.stringify(patchWithoutAssignee),
+        },
+      );
+      warnings.push(
+        `Не удалось назначить дизайн-лида (${designLead}): identity не распознана. Назначьте вручную.`,
+      );
+    }
+  }
 
   const reviewId = Number(created?.id);
 
@@ -1140,8 +1405,7 @@ export async function createReviewWorkItem(config, source) {
     throw new Error("Не удалось создать задачу на ревью: сервер не вернул номер задачи.");
   }
 
-  const reviewUrl = buildWorkItemWebUrl(config.apiRoot, config.project, reviewId, created);
-  const warnings = [];
+  const reviewUrl = buildWorkItemWebUrl(config.apiRoot, reviewProject, reviewId, created);
 
   // FR-012: связь Related с исходной задачей.
   try {
@@ -1150,6 +1414,7 @@ export async function createReviewWorkItem(config, source) {
       reviewId,
       "System.LinkTypes.Related",
       buildWorkItemApiUrl(config, sourceId),
+      reviewProject,
     );
   } catch (error) {
     logAdoError("createReviewWorkItem:related", error);
@@ -1167,6 +1432,7 @@ export async function createReviewWorkItem(config, source) {
         reviewId,
         "System.LinkTypes.Hierarchy-Reverse",
         buildWorkItemApiUrl(config, parentId),
+        reviewProject,
       );
     } catch (error) {
       logAdoError("createReviewWorkItem:parent", error);
@@ -1195,9 +1461,12 @@ function buildWorkItemApiUrl(config, id) {
  * @param {number} workItemId
  * @param {string} rel
  * @param {string} targetUrl
+ * @param {string} [projectName] проект WI; по умолчанию `config.project`
  */
-async function addWorkItemRelation(config, workItemId, rel, targetUrl) {
-  const project = encodeURIComponent(config.project.trim());
+async function addWorkItemRelation(config, workItemId, rel, targetUrl, projectName) {
+  const project = encodeURIComponent(
+    String(projectName ?? config.project).trim() || config.project.trim(),
+  );
   const query = new URLSearchParams({
     "api-version": resolveApiVersion(config),
   });

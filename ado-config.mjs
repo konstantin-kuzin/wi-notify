@@ -20,6 +20,8 @@ export const DEFAULT_ADO_CONFIG = {
   pat: "",
   /**
    * Настройки сценария «Создать задачу на ревью».
+   * `reviewProject` — Team Project, в котором всегда создаётся задача на ревью
+   *   (независимо от `project` в основных настройках / проекта исходной WI).
    * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`).
    * `reviewTemplateId` — GUID командного шаблона (work item template), поля которого копируются
    *   в создаваемую задачу через API. По умолчанию — шаблон «Design review» команды B2B Design System.
@@ -36,6 +38,7 @@ export const DEFAULT_ADO_CONFIG = {
    *   назначается на этого пользователя. Пусто — не назначать.
    * `reviewDesignLeadName` — отображаемое имя дизайн-лида (для показа в поле настроек).
    */
+  reviewProject: "B2B Design System",
   reviewWorkItemType: "Review",
   reviewTemplateId: "251d335a-fe7f-4ac3-afb0-7417eb9e4689",
   reviewTemplateTeam: "B2B Design System Team",
@@ -59,6 +62,7 @@ export async function loadAdoConfig() {
 
   // Поля сценария «Ревью» без UI — всегда берём из дефолтов (хардкод),
   // чтобы устаревшие значения из storage их не перекрывали.
+  raw.reviewProject = DEFAULT_ADO_CONFIG.reviewProject;
   raw.reviewWorkItemType = DEFAULT_ADO_CONFIG.reviewWorkItemType;
   raw.reviewTemplateId = DEFAULT_ADO_CONFIG.reviewTemplateId;
   raw.reviewTemplateTeam = DEFAULT_ADO_CONFIG.reviewTemplateTeam;
@@ -108,6 +112,10 @@ export function validateAdoConfig(config) {
 export function validateReviewConfig(config) {
   const errors = [];
 
+  if (!String(config?.reviewProject ?? "").trim()) {
+    errors.push("Укажите проект для задач на ревью (например B2B Design System).");
+  }
+
   if (!String(config?.reviewWorkItemType ?? "").trim()) {
     errors.push("Укажите тип задачи на ревью (например Review).");
   }
@@ -154,6 +162,17 @@ export function parseReviewDesignTypes(value) {
 export function resolveApiVersion(config) {
   const raw = config?.apiVersion ?? DEFAULT_ADO_CONFIG.apiVersion;
   return String(raw ?? "").trim() || DEFAULT_ADO_CONFIG.apiVersion;
+}
+
+/**
+ * Проект, в котором создаются задачи на ревью.
+ * Не зависит от `project` в основных настройках (список WI в popup).
+ * @param {typeof DEFAULT_ADO_CONFIG} config
+ * @returns {string}
+ */
+export function resolveReviewProject(config) {
+  const raw = String(config?.reviewProject ?? "").trim();
+  return raw || DEFAULT_ADO_CONFIG.reviewProject;
 }
 
 export function resolveRefreshIntervalMinutes(config) {
