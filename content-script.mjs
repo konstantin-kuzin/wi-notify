@@ -721,6 +721,7 @@ function addAiButtonToDescriptionToolbar() {
 
 const REVIEW_BUTTON_CLASS = "wi-create-review-button";
 const REVIEW_BUTTON_CONTAINER_CLASS = "wi-create-review-container";
+const REVIEW_OVERFLOW_ITEM_CLASS = "wi-create-review-overflow-item";
 const REVIEW_TOAST_CLASS = "wi-review-toast";
 const ADO_CONFIG_STORAGE_KEY = "adoConfig";
 const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
@@ -734,8 +735,13 @@ const REVIEW_TOOLBAR_SELECTORS = [
   ".work-item-form-header .bolt-header-commandbar .ms-CommandBar-primaryCommands",
   ".work-item-form-header .ms-CommandBar-primaryCommands",
 ];
+/** Максимум ждём окончания Save, потом всё равно показываем кнопку. */
+const REVIEW_SAVE_WATCH_TIMEOUT_MS = 10000;
 
 let reviewConfigCache = null;
+/** true — Save в процессе: кнопку скрываем, монтируем только после окончания загрузки. */
+let reviewPausedForSave = false;
+let reviewSaveWatchStartedAt = 0;
 
 function parseReviewDesignTypes(value) {
   return String(value ?? "")
@@ -953,34 +959,50 @@ function isWorkItemFormPresent() {
   return Boolean(getWorkItemFormRoot());
 }
 
-function shouldShowReviewButton() {
+/**
+ * Видимость кнопки Design Review Task.
+ * `unknown` — переходное состояние DOM (Save / SPA-перерисовка): id или тип
+ * временно не читаются. В этом случае уже смонтированную кнопку не трогаем,
+ * чтобы не было мельтешения тулбара.
+ * @returns {"show"|"hide"|"unknown"}
+ */
+function getReviewButtonVisibility() {
   if (!isWorkItemFormPresent()) {
-    return false;
-  }
-
-  // Без номера сохранённой задачи сценарий недоступен (в т.ч. на форме создания).
-  if (getSourceWorkItemId() === null) {
-    return false;
+    return "hide";
   }
 
   // Тоггл в настройках: выключен — кнопку не показываем.
   if (reviewConfigCache?.reviewEnabled === false) {
-    return false;
+    return "hide";
+  }
+
+  // Без номера сохранённой задачи сценарий недоступен (в т.ч. на форме создания).
+  // Во время Save шапка формы может кратко перерисоваться без id — не снимаем кнопку.
+  if (getSourceWorkItemId() === null) {
+    if (/_workitems\/create\b/i.test(location.href)) {
+      return "hide";
+    }
+    return "unknown";
   }
 
   // FR-002 / Q-003: ограничение по типу исходной задачи, если задано в настройках.
   const allowedTypes = parseReviewDesignTypes(reviewConfigCache?.reviewDesignTypes);
   if (!allowedTypes.length) {
-    return true;
+    return "show";
   }
 
   const type = getSourceWorkItemType();
   if (!type) {
-    // Тип не удалось определить при заданном белом списке — не показывать.
-    return false;
+    return "unknown";
   }
 
-  return allowedTypes.some((allowed) => allowed.toLowerCase() === type.toLowerCase());
+  return allowedTypes.some((allowed) => allowed.toLowerCase() === type.toLowerCase())
+    ? "show"
+    : "hide";
+}
+
+function shouldShowReviewButton() {
+  return getReviewButtonVisibility() === "show";
 }
 
 function findReviewToolbarHost() {
@@ -1140,7 +1162,7 @@ async function handleCreateReviewClick(control) {
 
   // FR-016: блокируем повторный запуск и показываем состояние.
   const label = control.querySelector(".wi-create-review-label");
-  const originalText = label?.textContent ?? "Создать задачу на ревью";
+  const originalText = label?.textContent ?? getReviewMenuItemLabel();
   control.dataset.state = "pending";
   if (control instanceof HTMLButtonElement) {
     control.disabled = true;
@@ -1149,7 +1171,7 @@ async function handleCreateReviewClick(control) {
     control.setAttribute("aria-disabled", "true");
   }
   if (label) {
-    label.textContent = "Создаём…";
+    label.textContent = getReviewPendingLabel();
   }
 
   try {
@@ -1229,24 +1251,73 @@ function createReviewIconAndLabel() {
 
   const label = document.createElement("span");
   label.className = "text wi-create-review-label";
-  label.textContent = "Design Review Task";
+  label.textContent = getReviewMenuItemLabel();
 
   return { icon, label };
 }
 
 /**
- * Классический TFS: пункт меню в том же ряду, что Save / Follow.
+ * Локаль UI TFS/ADO: по lang страницы и подписям тулбара (Save/Сохранить).
+ * @returns {boolean}
+ */
+function isTfsUiRussian() {
+  const lang = String(
+    document.documentElement.lang
+    || document.body?.getAttribute("lang")
+    || "",
+  ).toLowerCase();
+
+  if (lang.startsWith("ru")) {
+    return true;
+  }
+  if (lang.startsWith("en")) {
+    return false;
+  }
+
+  const menuBar = findClassicMenuBar();
+  const sample = String(menuBar?.textContent || document.body?.innerText || "")
+    .slice(0, 4000)
+    .toLowerCase();
+
+  if (sample.includes("сохранить") || sample.includes("отслеж") || sample.includes("удалить")) {
+    return true;
+  }
+  if (/\bsave\b/.test(sample) || /\bfollow\b/.test(sample) || /\bdelete\b/.test(sample)) {
+    return false;
+  }
+
+  return String(navigator.language || "").toLowerCase().startsWith("ru");
+}
+
+function getReviewMenuItemLabel() {
+  return isTfsUiRussian()
+    ? "Создать задачу на дизайн-ревью"
+    : "New design review task";
+}
+
+function getReviewMenuItemTitle() {
+  return isTfsUiRussian()
+    ? "Создать связанную задачу типа Review из этой задачи на дизайн"
+    : "Create a linked Review work item from this design task";
+}
+
+function getReviewPendingLabel() {
+  return isTfsUiRussian() ? "Создаём…" : "Creating…";
+}
+
+/**
+ * Пункт в выпадающем меню «...» тулбара WI.
  * @returns {HTMLLIElement}
  */
-function createReviewMenuItem() {
+function createReviewOverflowMenuItem() {
   ensureReviewIconFont();
 
   const item = document.createElement("li");
-  item.className = `menu-item ${REVIEW_BUTTON_CONTAINER_CLASS}`;
+  item.className = `menu-item ${REVIEW_OVERFLOW_ITEM_CLASS}`;
   item.dataset.state = "idle";
   item.setAttribute("role", "menuitem");
   item.tabIndex = -1;
-  item.title = "Создать связанную задачу типа Review из этой задачи на дизайн";
+  item.title = getReviewMenuItemTitle();
   item.setAttribute("aria-disabled", "false");
 
   const { icon, label } = createReviewIconAndLabel();
@@ -1265,24 +1336,114 @@ function createReviewMenuItem() {
   return item;
 }
 
-/** Bolt UI fallback: отдельная кнопка. */
-function createReviewButton() {
-  ensureReviewIconFont();
+/**
+ * Ищет открытый popup меню «...» формы work item.
+ * @returns {HTMLElement|null}
+ */
+function findWorkItemOverflowMenuList() {
+  const selectors = [
+    ".menu-popup ul.menu",
+    ".menu-popup .menu",
+    ".sub-menu ul.menu",
+    ".ms-ContextualMenu-list",
+    "[role='menu']",
+  ];
 
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = `${REVIEW_BUTTON_CLASS} bolt-button bolt-button-secondary`;
-  button.dataset.state = "idle";
-  button.title = "Создать связанную задачу типа Review из этой задачи на дизайн";
+  const candidates = [];
+  for (const selector of selectors) {
+    for (const node of document.querySelectorAll(selector)) {
+      if (node instanceof HTMLElement) {
+        candidates.push(node);
+      }
+    }
+  }
 
-  const { icon, label } = createReviewIconAndLabel();
-  icon.className = "wi-create-review-icon";
-  label.className = "wi-create-review-label";
-  button.append(icon, label);
-  button.addEventListener("click", () => {
-    void handleCreateReviewClick(button);
-  });
-  return button;
+  for (const menu of candidates) {
+    if (!isVisible(menu)) {
+      continue;
+    }
+
+    const text = (menu.textContent || "").toLowerCase();
+    const looksLikeOverflow = (
+      text.includes("удалить")
+      || text.includes("delete")
+      || text.includes("шаблон")
+      || text.includes("template")
+      || text.includes("создать копию")
+      || text.includes("copy of the work item")
+      || text.includes("visualize")
+      || text.includes("excel")
+      || text.includes("связанный")
+      || text.includes("linked work item")
+      || text.includes("сочетания клавиш")
+      || text.includes("keyboard shortcuts")
+    );
+
+    if (!looksLikeOverflow) {
+      continue;
+    }
+
+    // Берём ul со строками, если нашли обёртку.
+    if (menu.matches("ul, [role='menu'], .ms-ContextualMenu-list")) {
+      return menu;
+    }
+    const inner = menu.querySelector("ul.menu, ul[role='menu'], .ms-ContextualMenu-list");
+    if (inner instanceof HTMLElement) {
+      return inner;
+    }
+    return menu;
+  }
+
+  return null;
+}
+
+/**
+ * Добавляет пункт в меню «...» сразу при открытии (без debounce).
+ * @returns {boolean}
+ */
+function addReviewOverflowMenuItem() {
+  // Старую кнопку в тулбаре больше не показываем.
+  document.querySelectorAll(`.${REVIEW_BUTTON_CONTAINER_CLASS}`).forEach((node) => node.remove());
+
+  const existing = document.querySelectorAll(`.${REVIEW_OVERFLOW_ITEM_CLASS}`);
+  const visibility = getReviewButtonVisibility();
+
+  if (visibility === "hide") {
+    existing.forEach((node) => node.remove());
+    return false;
+  }
+
+  const menu = findWorkItemOverflowMenuList();
+  if (!menu) {
+    return false;
+  }
+
+  // Переходный DOM: не создаём новый пункт, но оставляем уже вставленный.
+  if (visibility !== "show") {
+    for (const node of existing) {
+      if (menu.contains(node)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const expectedLabel = getReviewMenuItemLabel();
+  for (const node of existing) {
+    if (menu.contains(node)) {
+      const label = node.querySelector(".wi-create-review-label");
+      if (label && label.textContent !== expectedLabel && node.dataset.state !== "pending") {
+        label.textContent = expectedLabel;
+        node.title = getReviewMenuItemTitle();
+      }
+      return true;
+    }
+  }
+
+  existing.forEach((node) => node.remove());
+  const item = createReviewOverflowMenuItem();
+  menu.insertBefore(item, menu.firstChild);
+  return true;
 }
 
 function findClassicMenuBar() {
@@ -1309,6 +1470,72 @@ function findClassicMenuBar() {
 }
 
 /**
+ * @param {Element} el
+ * @returns {string}
+ */
+function getToolbarControlHaystack(el) {
+  return [
+    el.getAttribute("aria-label"),
+    el.getAttribute("title"),
+    el.getAttribute("command"),
+    el.getAttribute("data-command-key"),
+    el.getAttribute("command-key"),
+    el.textContent,
+  ]
+    .map((part) => String(part ?? "").trim().toLowerCase())
+    .join(" ");
+}
+
+/**
+ * @param {string} haystack
+ * @returns {boolean}
+ */
+function isFollowHaystack(haystack) {
+  return (
+    /\bfollow\b/.test(haystack)
+    || /\bunfollow\b/.test(haystack)
+    || haystack.includes("следить")
+    || haystack.includes("отслеж")
+    || haystack.includes("отписаться")
+  );
+}
+
+/**
+ * @param {string} haystack
+ * @returns {boolean}
+ */
+function isSaveHaystack(haystack) {
+  return (
+    /\bsave\b/.test(haystack)
+    || haystack.includes("сохранить")
+    || haystack.includes("сохран")
+  );
+}
+
+/**
+ * @param {string} haystack
+ * @returns {boolean}
+ */
+function isRefreshHaystack(haystack) {
+  return (
+    /\brefresh\b/.test(haystack)
+    || haystack.includes("обновить")
+    || haystack.includes("refresh work item")
+  );
+}
+
+/**
+ * @param {string} haystack
+ * @returns {boolean}
+ */
+function isNotificationSettingsHaystack(haystack) {
+  return (
+    haystack.includes("notification settings")
+    || haystack.includes("настройки уведомлений")
+  );
+}
+
+/**
  * @param {HTMLElement} menuBar
  * @returns {HTMLElement|null}
  */
@@ -1321,11 +1548,10 @@ function findSaveMenuItem(menuBar) {
   }
 
   for (const item of menuBar.querySelectorAll("li.menu-item")) {
-    if (!(item instanceof HTMLElement)) {
+    if (!(item instanceof HTMLElement) || item.classList.contains(REVIEW_BUTTON_CONTAINER_CLASS)) {
       continue;
     }
-    const text = (item.textContent || "").trim().toLowerCase();
-    if (/\bsave\b/.test(text) || text.includes("сохранить")) {
+    if (isSaveHaystack(getToolbarControlHaystack(item))) {
       return item;
     }
   }
@@ -1333,54 +1559,239 @@ function findSaveMenuItem(menuBar) {
   return null;
 }
 
-/** Уже стоит сразу справа от Save внутри menu-bar. */
-function isReviewButtonCorrectlyPlaced(node) {
-  if (!(node instanceof HTMLElement)) {
-    return false;
+/**
+ * @param {HTMLElement} menuBar
+ * @returns {HTMLElement|null}
+ */
+function findFollowMenuItem(menuBar) {
+  for (const item of menuBar.querySelectorAll("li.menu-item")) {
+    if (!(item instanceof HTMLElement) || item.classList.contains(REVIEW_BUTTON_CONTAINER_CLASS)) {
+      continue;
+    }
+    if (isFollowHaystack(getToolbarControlHaystack(item))) {
+      return item;
+    }
   }
 
-  if (node.matches("li.menu-item")) {
-    const prev = node.previousElementSibling;
-    if (!(prev instanceof HTMLElement)) {
-      return false;
+  return null;
+}
+
+/**
+ * Ищет Notification Settings в menu-bar или в ближайшем контейнере тулбара.
+ * @param {HTMLElement} menuBar
+ * @returns {HTMLElement|null}
+ */
+function findNotificationSettingsMenuItem(menuBar) {
+  const scopes = [
+    menuBar,
+    menuBar.closest(
+      ".work-item-form-toolbar-container, .workitem-tool-bar, .toolbar.workitem-tool-bar, .toolbar",
+    ),
+  ];
+
+  for (const scope of scopes) {
+    if (!(scope instanceof HTMLElement)) {
+      continue;
     }
-    return (
-      prev.getAttribute("command") === "save-work-item"
-      || prev.classList.contains("save-only")
-      || prev.classList.contains("drop-down-save")
-      || /\bsave\b/i.test(prev.textContent || "")
-    );
+
+    for (const el of scope.querySelectorAll(
+      "li.menu-item, button, a[role='button'], [role='menuitem'], [title], [aria-label]",
+    )) {
+      if (!(el instanceof HTMLElement) || el.closest(`.${REVIEW_BUTTON_CONTAINER_CLASS}`)) {
+        continue;
+      }
+
+      if (!isNotificationSettingsHaystack(getToolbarControlHaystack(el))) {
+        continue;
+      }
+
+      const menuItem = el.closest("li.menu-item");
+      return menuItem instanceof HTMLElement ? menuItem : el;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Якорь для подписей (NS / Follow / Save). Для float:right лучше опираться на Refresh.
+ * @param {HTMLElement} menuBar
+ * @returns {HTMLElement|null}
+ */
+function findClassicReviewPlacementAnchor(menuBar) {
+  return (
+    findNotificationSettingsMenuItem(menuBar)
+    || findFollowMenuItem(menuBar)
+    || findSaveMenuItem(menuBar)
+  );
+}
+
+/**
+ * @param {HTMLElement} menuBar
+ * @returns {HTMLElement|null}
+ */
+function findRefreshMenuItem(menuBar) {
+  for (const item of menuBar.querySelectorAll("li.menu-item")) {
+    if (!(item instanceof HTMLElement) || item.classList.contains(REVIEW_BUTTON_CONTAINER_CLASS)) {
+      continue;
+    }
+    if (isRefreshHaystack(getToolbarControlHaystack(item))) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * В классическом TFS toolbar часто float:right — DOM-порядок обратен визуальному.
+ * @param {HTMLElement} menuBar
+ * @returns {boolean}
+ */
+function isMenuBarFloatRight(menuBar) {
+  const styleCandidates = [
+    menuBar,
+    menuBar.parentElement,
+    menuBar.closest(".toolbar"),
+    menuBar.closest(".workitem-tool-bar"),
+    menuBar.closest(".work-item-form-toolbar-container"),
+  ];
+
+  for (const el of styleCandidates) {
+    if (el instanceof HTMLElement && getComputedStyle(el).float === "right") {
+      return true;
+    }
+  }
+
+  // Эвристика: первый li визуально правее последнего.
+  const items = [...menuBar.querySelectorAll(":scope > li.menu-item")].filter(
+    (li) => li instanceof HTMLElement
+      && !li.classList.contains(REVIEW_BUTTON_CONTAINER_CLASS)
+      && isVisible(li),
+  );
+  if (items.length >= 2) {
+    const firstRect = items[0].getBoundingClientRect();
+    const lastRect = items[items.length - 1].getBoundingClientRect();
+    if (firstRect.left > lastRect.left + 4) {
+      return true;
+    }
   }
 
   return false;
 }
 
 /**
- * Ищет кнопку Save в Bolt-тулбаре.
+ * Вставить кнопку визуально справа от gear / слева от Refresh.
+ * При float:right это `refresh.after(item)` в DOM.
+ * @param {HTMLElement} menuBar
+ * @param {HTMLElement} item
+ */
+function placeReviewMenuItem(menuBar, item) {
+  const floatRight = isMenuBarFloatRight(menuBar);
+  const refresh = findRefreshMenuItem(menuBar);
+  const anchor = findClassicReviewPlacementAnchor(menuBar);
+
+  if (floatRight) {
+    // DOM: … Refresh, Review, Gear… → визуально: … Gear, Review, Refresh …
+    if (refresh) {
+      if (item.previousElementSibling !== refresh || item.parentElement !== refresh.parentElement) {
+        refresh.after(item);
+      }
+      return;
+    }
+    if (anchor) {
+      if (item.nextElementSibling !== anchor || item.parentElement !== anchor.parentElement) {
+        anchor.before(item);
+      }
+      return;
+    }
+    menuBar.appendChild(item);
+    return;
+  }
+
+  // Обычный LTR: сразу после Notification Settings / Follow / Save, иначе перед Refresh.
+  if (anchor) {
+    if (item.previousElementSibling !== anchor || item.parentElement !== anchor.parentElement) {
+      anchor.after(item);
+    }
+    return;
+  }
+  if (refresh) {
+    if (item.nextElementSibling !== refresh || item.parentElement !== refresh.parentElement) {
+      refresh.before(item);
+    }
+    return;
+  }
+  menuBar.appendChild(item);
+}
+
+/**
+ * Кнопка стоит в нужном слоте относительно Refresh/якоря (с учётом float:right).
+ * @param {HTMLElement} node
+ * @param {HTMLElement} menuBar
+ * @returns {boolean}
+ */
+function isReviewMenuItemCorrectlyPlaced(node, menuBar) {
+  if (!menuBar.contains(node)) {
+    return false;
+  }
+
+  const floatRight = isMenuBarFloatRight(menuBar);
+  const refresh = findRefreshMenuItem(menuBar);
+  const anchor = findClassicReviewPlacementAnchor(menuBar);
+
+  if (floatRight) {
+    if (refresh) {
+      return node.previousElementSibling === refresh;
+    }
+    if (anchor) {
+      return node.nextElementSibling === anchor;
+    }
+    return node === menuBar.lastElementChild;
+  }
+
+  if (anchor) {
+    return node.previousElementSibling === anchor;
+  }
+  if (refresh) {
+    return node.nextElementSibling === refresh;
+  }
+  return node === menuBar.lastElementChild;
+}
+
+/**
+ * @param {HTMLElement} node
+ * @returns {boolean}
+ */
+function isReviewButtonInToolbar(node) {
+  if (!(node instanceof HTMLElement) || !node.isConnected) {
+    return false;
+  }
+
+  const menuBar = findClassicMenuBar();
+  if (menuBar && menuBar.contains(node)) {
+    return isReviewMenuItemCorrectlyPlaced(node, menuBar);
+  }
+
+  const host = findReviewToolbarHost();
+  return Boolean(host && host.contains(node));
+}
+
+/**
  * @param {HTMLElement} host
+ * @param {(haystack: string) => boolean} match
  * @returns {HTMLElement|null}
  */
-function findSaveToolbarControl(host) {
+function findToolbarControlByHaystack(host, match) {
   const candidates = host.querySelectorAll(
-    "button, a[role='button'], input[type='button'], .toolbar-item, [command-key], [data-command-key]",
+    "button, a[role='button'], input[type='button'], .toolbar-item, [command-key], [data-command-key], li.menu-item",
   );
 
   for (const el of candidates) {
-    if (!(el instanceof HTMLElement)) {
+    if (!(el instanceof HTMLElement) || el.closest(`.${REVIEW_BUTTON_CONTAINER_CLASS}`)) {
       continue;
     }
 
-    const haystack = [
-      el.getAttribute("aria-label"),
-      el.getAttribute("title"),
-      el.getAttribute("data-command-key"),
-      el.getAttribute("command-key"),
-      el.textContent,
-    ]
-      .map((part) => String(part ?? "").trim().toLowerCase())
-      .join(" ");
-
-    if (/\bsave\b/.test(haystack) || haystack.includes("сохранить")) {
+    if (match(getToolbarControlHaystack(el))) {
       return el;
     }
   }
@@ -1388,72 +1799,222 @@ function findSaveToolbarControl(host) {
   return null;
 }
 
-function addReviewButton() {
-  const existing = document.querySelectorAll(`.${REVIEW_BUTTON_CONTAINER_CLASS}`);
-  const toolbarReady = Boolean(findClassicMenuBar() || findReviewToolbarHost());
+/**
+ * @param {HTMLElement} host
+ * @returns {HTMLElement|null}
+ */
+function findBoltReviewPlacementControl(host) {
+  return (
+    findToolbarControlByHaystack(host, isNotificationSettingsHaystack)
+    || findToolbarControlByHaystack(host, isFollowHaystack)
+    || findToolbarControlByHaystack(host, isSaveHaystack)
+  );
+}
 
-  // Пока детальная форма только грузится — не монтируем и не удаляем узлы,
-  // чтобы не мешать инициализации панели на Queries.
-  if (!toolbarReady) {
-    return false;
+/**
+ * @param {HTMLElement} host
+ * @param {HTMLElement} container
+ * @param {HTMLElement|null} control
+ */
+function insertAfterToolbarControl(host, container, control) {
+  if (!control) {
+    host.appendChild(container);
+    return;
   }
 
-  if (!shouldShowReviewButton()) {
-    existing.forEach((node) => node.remove());
-    return false;
+  let anchor = control;
+  while (anchor.parentElement && anchor.parentElement !== host) {
+    anchor = anchor.parentElement;
   }
 
-  for (const node of existing) {
-    if (isReviewButtonCorrectlyPlaced(node)) {
-      return true;
+  if (anchor.parentElement === host) {
+    anchor.after(container);
+  } else {
+    control.after(container);
+  }
+}
+
+/**
+ * @param {Iterable<Element>} nodes
+ * @returns {HTMLElement|null}
+ */
+function takePrimaryReviewNode(nodes) {
+  let primary = null;
+  for (const node of nodes) {
+    if (!(node instanceof HTMLElement)) {
+      continue;
     }
+    if (!primary) {
+      primary = node;
+      continue;
+    }
+    node.remove();
+  }
+  return primary;
+}
+
+function removeReviewButtons() {
+  document.querySelectorAll(`.${REVIEW_BUTTON_CONTAINER_CLASS}`).forEach((node) => node.remove());
+  document.querySelectorAll(`.${REVIEW_OVERFLOW_ITEM_CLASS}`).forEach((node) => node.remove());
+}
+
+function isWorkItemFormBusy() {
+  const form = getWorkItemFormRoot();
+  if (!form) {
+    return false;
   }
 
-  // Убираем старое/неверное размещение (раньше кнопка оказывалась слева из‑за float:right у тулбара).
-  existing.forEach((node) => node.remove());
+  return Boolean(
+    form.querySelector(
+      [
+        '[aria-busy="true"]',
+        ".work-item-form-loading",
+        ".status-progress",
+        ".progress-text",
+        ".loading-indicator",
+        ".is-loading",
+        ".busy-overlay",
+        ".status-indicator.progress",
+      ].join(", "),
+    ),
+  );
+}
 
-  // Классический TFS: вставляем li сразу после Save в menu-bar — тогда совпадают размер и шрифт.
+function isSaveControlStillSavingOrDirty() {
   const menuBar = findClassicMenuBar();
-  if (menuBar) {
-    const item = createReviewMenuItem();
-    const saveItem = findSaveMenuItem(menuBar);
-    if (saveItem) {
-      saveItem.after(item);
-    } else {
-      menuBar.appendChild(item);
-    }
-    console.log(`${LOG_PREFIX} Review menu item mounted after Save.`);
+  const host = menuBar || findReviewToolbarHost();
+  if (!host) {
     return true;
   }
 
-  // Bolt UI fallback — только внутри формы WI.
-  const host = findReviewToolbarHost();
-  if (!host) {
+  const save = menuBar
+    ? findSaveMenuItem(menuBar)
+    : findToolbarControlByHaystack(host, isSaveHaystack);
+
+  if (!save) {
+    return true;
+  }
+
+  const haystack = getToolbarControlHaystack(save);
+  if (haystack.includes("saving") || haystack.includes("сохраня")) {
+    return true;
+  }
+
+  const disabled = (
+    save.classList.contains("disabled")
+    || save.getAttribute("aria-disabled") === "true"
+    || save.hasAttribute("disabled")
+  );
+
+  // Save disabled ≈ сохранение завершено и грязных правок нет.
+  return !disabled;
+}
+
+/**
+ * Можно ли снова показать кнопку после Save.
+ * Ждём: нет busy-индикаторов и Save снова в idle (disabled).
+ */
+function canShowReviewButtonAfterSave() {
+  if (!reviewPausedForSave) {
+    return true;
+  }
+
+  if (Date.now() - reviewSaveWatchStartedAt >= REVIEW_SAVE_WATCH_TIMEOUT_MS) {
+    return true;
+  }
+
+  if (isWorkItemFormBusy()) {
     return false;
   }
 
-  const container = document.createElement("div");
-  container.className = REVIEW_BUTTON_CONTAINER_CLASS;
-  container.appendChild(createReviewButton());
-
-  const save = findSaveToolbarControl(host);
-  if (save) {
-    let anchor = save;
-    while (anchor.parentElement && anchor.parentElement !== host) {
-      anchor = anchor.parentElement;
-    }
-    if (anchor.parentElement === host) {
-      anchor.after(container);
-    } else {
-      save.after(container);
-    }
-  } else {
-    host.appendChild(container);
+  if (isSaveControlStillSavingOrDirty()) {
+    return false;
   }
 
-  console.log(`${LOG_PREFIX} Review button mounted in work item form toolbar.`);
-  return true;
+  const menuBar = findClassicMenuBar();
+  if (menuBar) {
+    return Boolean(findClassicReviewPlacementAnchor(menuBar));
+  }
+
+  return Boolean(findReviewToolbarHost());
 }
+
+function removeToolbarReviewButtonLeftovers() {
+  document.querySelectorAll(`.${REVIEW_BUTTON_CONTAINER_CLASS}`).forEach((node) => node.remove());
+}
+
+function isOverflowMenuToggleTarget(target) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const control = target.closest(
+    "li.menu-item, button, a[role='button'], [role='menuitem'], [role='button']",
+  );
+  if (!(control instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (control.closest(`.${REVIEW_OVERFLOW_ITEM_CLASS}, .${REVIEW_BUTTON_CONTAINER_CLASS}`)) {
+    return false;
+  }
+
+  if (
+    control.querySelector(
+      ".bowtie-ellipsis, .bowtie-icon.bowtie-ellipsis, [class*='ellipsis'], .ms-Icon--More",
+    )
+  ) {
+    return true;
+  }
+
+  const haystack = getToolbarControlHaystack(control);
+  if (
+    haystack.includes("more actions")
+    || haystack.includes("more options")
+    || haystack.includes("дополнитель")
+    || haystack.includes("другие действия")
+  ) {
+    return true;
+  }
+
+  const text = String(control.textContent || "").replace(/\s+/g, "").trim();
+  return text === "..." || text === "…" || text === "⋯" || text === "•••";
+}
+
+/**
+ * Сразу вставляем пункт, как только DOM меню появился (без 400ms debounce).
+ */
+function mountReviewOverflowNow() {
+  if (isMutatingUi) {
+    return;
+  }
+
+  isMutatingUi = true;
+  try {
+    removeToolbarReviewButtonLeftovers();
+    addReviewOverflowMenuItem();
+  } finally {
+    queueMicrotask(() => {
+      isMutatingUi = false;
+    });
+  }
+}
+
+document.addEventListener(
+  "click",
+  (event) => {
+    if (!isOverflowMenuToggleTarget(event.target)) {
+      return;
+    }
+    // Меню рисуется после клика — несколько быстрых попыток без заметной задержки.
+    queueMicrotask(() => mountReviewOverflowNow());
+    requestAnimationFrame(() => {
+      mountReviewOverflowNow();
+      requestAnimationFrame(() => mountReviewOverflowNow());
+    });
+  },
+  true,
+);
 
 function loadReviewConfigCache() {
   try {
@@ -1464,6 +2025,7 @@ function loadReviewConfigCache() {
 
       reviewConfigCache = result?.[ADO_CONFIG_STORAGE_KEY] ?? null;
       scheduleUiMount();
+      mountReviewOverflowNow();
     });
   } catch (error) {
     console.warn(`${LOG_PREFIX} Failed to load review config.`, error);
@@ -1474,15 +2036,19 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[ADO_CONFIG_STORAGE_KEY]) {
     reviewConfigCache = changes[ADO_CONFIG_STORAGE_KEY].newValue ?? null;
     scheduleUiMount();
+    mountReviewOverflowNow();
   }
 });
 
 let uiMountTimerId = null;
 let isMutatingUi = false;
 
+/** Debounce только для AI-кнопки в Description; пункт меню «...» монтируется сразу. */
+const UI_MOUNT_DEBOUNCE_MS = 400;
+
 function scheduleUiMount() {
   if (uiMountTimerId !== null) {
-    return;
+    window.clearTimeout(uiMountTimerId);
   }
 
   uiMountTimerId = window.setTimeout(() => {
@@ -1497,19 +2063,25 @@ function scheduleUiMount() {
       if (AI_FEATURES_ENABLED) {
         addAiButtonToDescriptionToolbar();
       }
-      addReviewButton();
+      removeToolbarReviewButtonLeftovers();
+      addReviewOverflowMenuItem();
     } finally {
-      isMutatingUi = false;
+      queueMicrotask(() => {
+        isMutatingUi = false;
+      });
     }
-  }, 200);
+  }, UI_MOUNT_DEBOUNCE_MS);
 }
 
-// Observe the DOM for changes to dynamically add the button
 const observer = new MutationObserver(() => {
   if (isMutatingUi) {
     return;
   }
-  scheduleUiMount();
+  // Меню «...» — сразу, без ожидания debounce.
+  mountReviewOverflowNow();
+  if (AI_FEATURES_ENABLED) {
+    scheduleUiMount();
+  }
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
@@ -1532,8 +2104,8 @@ if (AI_FEATURES_ENABLED) {
   });
 }
 
-// Initial check in case the toolbar is already present
 loadReviewConfigCache();
+mountReviewOverflowNow();
 scheduleUiMount();
 
 if (AI_FEATURES_ENABLED) {

@@ -73,8 +73,7 @@ async function init() {
     void fetchAndPopulateIterations();
   });
 
-  await fetchAndPopulateIterations(config.iterationPath ?? "");
-
+  // Ревью и AI заполняем сразу из storage — не ждём медленный запрос итераций.
   reviewProductNameInput.value = config.reviewProductName ?? DEFAULT_ADO_CONFIG.reviewProductName;
   reviewDesignLeadValueInput.value = config.reviewDesignLead ?? DEFAULT_ADO_CONFIG.reviewDesignLead;
   reviewDesignLeadNameInput.value = config.reviewDesignLeadName ?? DEFAULT_ADO_CONFIG.reviewDesignLeadName;
@@ -118,6 +117,8 @@ async function init() {
     event.preventDefault();
     void handleAiSubmit();
   });
+
+  void fetchAndPopulateIterations(config.iterationPath ?? "");
 }
 
 async function buildConfigForApi() {

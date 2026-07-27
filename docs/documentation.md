@@ -28,7 +28,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 ### На странице work item в Azure DevOps
 
-- Кнопка **Design Review Task**: из открытой задачи на дизайн в один клик создаёт связанную задачу типа `Review` по командному шаблону, проставляет связи и открывает результат в новой вкладке.
+- Пункт **Создать задачу на дизайн-ревью** / **New design review task** в меню **«...»** формы work item: из открытой задачи на дизайн в один клик создаёт связанную задачу типа `Review` по командному шаблону, проставляет связи и открывает результат в новой вкладке.
 
 > Кнопка AI Rewrite Description в форме WI сейчас **выключена** (`AI_FEATURES_ENABLED = false` в `content-script.mjs`). Код и handlers в background сохранены, но в UI не монтируются. В этой документации AI-сценарий не описывается как рабочий.
 
@@ -106,10 +106,10 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `reviewWorkItemType` | `Review` | Нет (хардкод) | Тип создаваемого WI |
 | `reviewTemplateId` | `""` | Да | GUID командного шаблона; задаётся в настройках |
 | `reviewTemplateTeam` | `""` | Да | Команда-владелец шаблона |
-| `reviewDesignTypes` | `Task,Mockup` | Нет (хардкод) | Типы исходных WI для показа кнопки через запятую; пусто = все типы |
+| `reviewDesignTypes` | `Task,Mockup` | Нет (хардкод) | Типы исходных WI для показа пункта в меню «...» через запятую; пусто = все типы |
 | `reviewPlaceholderText` | `Название и ссылка на задачу` | Нет (хардкод) | Текст в Description шаблона, заменяемый на ссылку исходной задачи |
 | `reviewParentId` | `""` | Да | Родительская задача; Review привязывается как child. Пусто — связь не добавлять |
-| `reviewEnabled` | `true` | Да (тоггл) | Вкл/выкл сценария: раскрытие блока настроек и показ кнопки Design Review Task |
+| `reviewEnabled` | `true` | Да (тоггл) | Вкл/выкл сценария: раскрытие блока настроек и показ пункта в меню «...» формы WI |
 | `reviewProductName` | `""` | Да | Префикс заголовка `[Продукт] …` |
 | `reviewDesignLead` | `""` | Да (hidden) | Identity для `System.AssignedTo` |
 | `reviewDesignLeadName` | `""` | Да | Отображаемое имя в комбобоксе |
@@ -307,45 +307,52 @@ Background читает `manifest.json` с GitHub raw URL репозитория
 
 Блок **Задача на ревью** (`#review-options-form`):
 
-1. **Тоггл** (`#review-enabled` → `reviewEnabled`) — слева от заголовка. Сохраняется сразу в `adoConfig`. Выключен: `#review-options-body` скрыт, кнопка Design Review Task не монтируется. Включён (дефолт): поля раскрыты.
+1. **Тоггл** (`#review-enabled` → `reviewEnabled`) — слева от заголовка. Сохраняется сразу в `adoConfig`. Выключен: `#review-options-body` скрыт, пункт в меню «...» не монтируется. Включён (дефолт): поля раскрыты.
 2. **Название продукта** (`#review-product-name`) — если задано, заголовок Review: `[Продукт] <заголовок исходной задачи>`; если пусто — заголовок копируется как есть.
 3. **Дизайн-лид** — комбобокс поиска пользователей (`search-identities`, debounce 300 ms, минимум 2 символа). Если выбран — `System.AssignedTo` новой задачи; если очищен — поле не назначается.
 4. **Сохранить настройки ревью** (`#save-review-button`) — пишет `reviewProductName`, `reviewDesignLead*` (и текущий `reviewEnabled`) в `adoConfig` и снова проставляет хардкод-поля ревью из дефолтов.
 
 Шаблон, родитель, тип WI и плейсхолдер Description в UI **не редактируются** (см. таблицу конфига выше).
 
-### Когда показывается кнопка
+### Когда показывается пункт меню
 
-Функция `shouldShowReviewButton()` / `addReviewButton()`:
+Функция `getReviewButtonVisibility()` / `addReviewOverflowMenuItem()`:
 
 1. На странице есть форма work item.
 2. Извлечён номер сохранённой задачи:
    - из URL: `/_workitems/edit/{id}` / `/_workitems/view/{id}`, либо query/hash `id` / `workitem` / `witd`;
    - либо из DOM формы (шапка / ссылки) — для панели списка на Queries/Backlogs, где URL остаётся `/_queries/query/{guid}/` без номера WI.
-3. На форме **создания** без id кнопка **не** показывается.
+3. На форме **создания** без id пункт **не** показывается.
 4. `reviewEnabled !== false` (тоггл в настройках; отсутствие поля = включено, как дефолт).
 5. Если `reviewDesignTypes` непустой — тип исходной WI должен совпасть (без учёта регистра). Дефолт: `Task,Mockup`.
-6. Если тип не удалось прочитать из DOM, а список типов задан — кнопку **не** показывать.
+6. Если тип не удалось прочитать из DOM, а список типов задан — пункт **не** показывать.
+7. Открыто выпадающее меню **«...»** тулбара формы WI (popup с пунктами вроде «Удалить» / Delete, шаблоны и т.п.).
 
-Монтирование устойчиво к SPA-перерисовкам: debounced `MutationObserver` на `document.body` + реакция на изменение `adoConfig` в storage. Тулбар и тип WI ищутся только внутри формы work item (не в гриде/command bar Queries), чтобы не вмешиваться в загрузку панели.
+Монтирование: сразу при открытии меню (`mountReviewOverflowNow` по клику на «...» и `MutationObserver`, без debounce). Тип WI ищется только внутри формы work item (не в гриде Queries).
 
-### Как выглядит кнопка
+### Как выглядит пункт
 
-Подпись: **Design Review Task** (глиф типа Review из шрифтов Bowtie / AzDevMDL2).
+Расположение: **первая строка** выпадающего меню **«...»** в панели формы work item (не кнопка в ряду Save / Follow).
 
-Два варианта встраивания:
+Подпись зависит от локали UI TFS/ADO (`isTfsUiRussian()` — `lang` страницы и подписи тулбара):
 
-1. **Классический TFS / Azure DevOps Server** — пункт меню `li.menu-item` сразу после кнопки Save в menu-bar (совпадают размер и шрифт).
-2. **Bolt UI** — secondary-кнопка в command bar тулбара формы (селекторы `.bolt-header-commandbar .ms-CommandBar-primaryCommands` и аналоги).
+| Локаль | Текст пункта | Состояние ожидания |
+|--------|--------------|--------------------|
+| RU | **Создать задачу на дизайн-ревью** | «Создаём…» |
+| EN | **New design review task** | «Creating…» |
 
-Tooltip: «Создать связанную задачу типа Review из этой задачи на дизайн».
+Глиф типа Review из шрифтов Bowtie / AzDevMDL2 (`\ueac4`).
+
+В DOM: `li.menu-item.wi-create-review-overflow-item` внутри popup (`ul.menu` / `[role='menu']`).
+
+Tooltip: RU — «Создать связанную задачу типа Review из этой задачи на дизайн»; EN — «Create a linked Review work item from this design task».
 
 ### Основной сценарий (пользователь)
 
 1. Открыть сохранённую задачу на дизайн в Azure DevOps.
 2. (Опционально) Скопировать в буфер ссылку на макеты `*.pixso.net` — она подставится в раздел «Макеты».
-3. Нажать **Design Review Task**.
-4. Кнопка переходит в состояние ожидания: подпись «Создаём…», повторные клики блокируются (`dataset.state = pending`).
+3. Открыть меню **«...»** на форме WI и выбрать **Создать задачу на дизайн-ревью** (или **New design review task**).
+4. Пункт переходит в состояние ожидания: подпись «Создаём…» / «Creating…», повторные клики блокируются (`dataset.state = pending`).
 5. По завершении:
    - созданная Review открывается в новой вкладке;
    - toast сообщает успех или частичный сбой связей;
@@ -463,7 +470,7 @@ content-script                     background                      Azure DevOps
 | `timesheet-api.mjs` | Запись и верификация усилий в TimeSheet |
 | `popup.html` / `popup.css` / `popup.mjs` | UI списка, фильтры, поиск, статус, комментарии, TimeSheet |
 | `options.html` / `options.css` / `options.mjs` | Основные настройки + задача на ревью (+ форма AI, не влияет на UI WI) |
-| `content-script.mjs` / `content-script.css` | Design Review Task на странице WI |
+| `content-script.mjs` / `content-script.css` | Пункт создания Review в меню «...» формы WI |
 | `ai-api.mjs` / `ai-config.mjs` | AI rewrite (UI выключен) |
 | `icons/*` | Иконки расширения и шрифты глифов; `icon-*-error.png` для badge ошибки |
 
@@ -478,7 +485,7 @@ content-script                     background                      Azure DevOps
 - Комментарии пишутся в `System.History`, не через Comments API create.
 - TimeSheet пишет только с пустой `Activity`.
 - Content script ограничен hosts из манифеста.
-- Устойчивость встраивания кнопки зависит от вёрстки ADO; при ненайденном тулбаре кнопка может не появиться (без поломки страницы).
+- Устойчивость встраивания пункта зависит от вёрстки ADO; если popup меню «...» не распознан, пункт может не появиться (без поломки страницы).
 
 ---
 
