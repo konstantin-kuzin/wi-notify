@@ -64,47 +64,69 @@
       </form>
 
       <form id="review-options-form" class="options__form">
-        <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Задача на ревью</legend>
+        <fieldset class="options__fieldset" id="review-fieldset">
+          <legend class="options__fieldset-legend options__fieldset-legend--with-toggle">
+            <label class="options__switch" title="Включить создание задачи на ревью">
+              <input
+                class="options__switch-input"
+                id="review-enabled"
+                name="reviewEnabled"
+                type="checkbox"
+                role="switch"
+              >
+              <span class="options__switch-track" aria-hidden="true">
+                <span class="options__switch-thumb"></span>
+              </span>
+              <span class="visually-hidden">Включить задачу на ревью</span>
+            </label>
+            <span>Задача на ревью</span>
+          </legend>
 
-          <label class="options__field">
-            <span class="options__label">Название продукта</span>
-            <input
-              class="options__input"
-              id="review-product-name"
-              name="reviewProductName"
-              type="text"
-              autocomplete="off"
-              placeholder="Например: KUMA"
-            >
-            <span class="options__hint">Добавляется в заголовок задачи на ревью в квадратных скобках перед названием исходной задачи: «[Продукт] …». Пусто — не добавлять.</span>
-          </label>
+          <p class="options__hint options__hint--fieldset" id="review-enabled-hint">
+            Создаёт связанную задачу типа Review из формы work item и показывает кнопку Design Review Task.
+            Выключите тоггл, чтобы скрыть кнопку и свернуть настройки.
+          </p>
 
-          <div class="options__field">
-            <span class="options__label">Дизайн-лид</span>
-            <div class="options__combo" id="review-design-lead-combo">
-              <span class="options__combo-avatar-slot" id="review-design-lead-avatar-slot"></span>
+          <div id="review-options-body">
+            <label class="options__field">
+              <span class="options__label">Название продукта</span>
               <input
                 class="options__input"
-                id="review-design-lead-input"
+                id="review-product-name"
+                name="reviewProductName"
                 type="text"
                 autocomplete="off"
-                placeholder="Начните вводить имя пользователя…"
-                role="combobox"
-                aria-expanded="false"
-                aria-autocomplete="list"
+                placeholder="Например: KUMA"
               >
-              <ul class="options__combo-list" id="review-design-lead-list" role="listbox" hidden></ul>
-            </div>
-            <input type="hidden" id="review-design-lead-value">
-            <input type="hidden" id="review-design-lead-name">
-            <input type="hidden" id="review-design-lead-avatar">
-            <span class="options__hint">Поиск среди пользователей. Если указан, задача на ревью назначается на этого пользователя. Очистите поле, чтобы не назначать.</span>
-          </div>
+              <span class="options__hint">Добавляется в заголовок задачи на ревью в квадратных скобках перед названием исходной задачи: «[Продукт] …». Пусто — не добавлять.</span>
+            </label>
 
-          <div class="options__actions">
-            <button class="options__button" type="button" id="save-review-button">Сохранить настройки ревью</button>
-            <span class="options__status" id="save-review-status" role="status"></span>
+            <div class="options__field">
+              <span class="options__label">Дизайн-лид</span>
+              <div class="options__combo" id="review-design-lead-combo">
+                <span class="options__combo-avatar-slot" id="review-design-lead-avatar-slot"></span>
+                <input
+                  class="options__input"
+                  id="review-design-lead-input"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="Начните вводить имя пользователя…"
+                  role="combobox"
+                  aria-expanded="false"
+                  aria-autocomplete="list"
+                >
+                <ul class="options__combo-list" id="review-design-lead-list" role="listbox" hidden></ul>
+              </div>
+              <input type="hidden" id="review-design-lead-value">
+              <input type="hidden" id="review-design-lead-name">
+              <input type="hidden" id="review-design-lead-avatar">
+              <span class="options__hint">Поиск среди пользователей. Если указан, задача на ревью назначается на этого пользователя. Очистите поле, чтобы не назначать.</span>
+            </div>
+
+            <div class="options__actions">
+              <button class="options__button" type="button" id="save-review-button">Сохранить настройки ревью</button>
+              <span class="options__status" id="save-review-status" role="status"></span>
+            </div>
           </div>
         </fieldset>
       </form>

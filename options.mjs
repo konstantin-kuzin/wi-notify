@@ -20,6 +20,9 @@ const saveButton = document.querySelector("#save-button");
 const saveStatus = document.querySelector("#save-status");
 
 const reviewForm = document.querySelector("#review-options-form");
+const reviewFieldset = document.querySelector("#review-fieldset");
+const reviewEnabledInput = document.querySelector("#review-enabled");
+const reviewOptionsBody = document.querySelector("#review-options-body");
 const reviewProductNameInput = document.querySelector("#review-product-name");
 const reviewDesignLeadCombo = document.querySelector("#review-design-lead-combo");
 const reviewDesignLeadInput = document.querySelector("#review-design-lead-input");
@@ -75,6 +78,14 @@ async function init() {
   reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
   updateDesignLeadFieldAvatar();
   setupDesignLeadCombo();
+
+  const reviewEnabled = config.reviewEnabled ?? DEFAULT_ADO_CONFIG.reviewEnabled;
+  reviewEnabledInput.checked = Boolean(reviewEnabled);
+  applyReviewEnabledUi(reviewEnabledInput.checked);
+
+  reviewEnabledInput.addEventListener("change", () => {
+    void handleReviewEnabledChange();
+  });
 
   saveReviewButton.addEventListener("click", () => {
     void handleReviewSubmit();
@@ -180,6 +191,7 @@ async function handleReviewSubmit() {
   const stored = await loadAdoConfig();
   const merged = {
     ...stored,
+    reviewEnabled: reviewEnabledInput.checked,
     reviewProductName: reviewProductNameInput.value.trim(),
     reviewDesignLead: reviewDesignLeadValueInput.value.trim(),
     reviewDesignLeadName: reviewDesignLeadNameInput.value.trim(),
@@ -214,6 +226,42 @@ async function handleReviewSubmit() {
 
   saveReviewStatus.textContent = "Настройки задачи на ревью сохранены.";
   saveReviewStatus.classList.add("options__status--ok");
+}
+
+/**
+ * Сворачивает/разворачивает поля блока «Задача на ревью» по состоянию тоггла.
+ * @param {boolean} enabled
+ */
+function applyReviewEnabledUi(enabled) {
+  reviewFieldset.classList.toggle("options__fieldset--collapsed", !enabled);
+  reviewOptionsBody.hidden = !enabled;
+  reviewEnabledInput.setAttribute("aria-checked", enabled ? "true" : "false");
+}
+
+/**
+ * Тоггл сразу пишется в storage — иначе при выключении нельзя сохранить через скрытую кнопку.
+ */
+async function handleReviewEnabledChange() {
+  const enabled = reviewEnabledInput.checked;
+  applyReviewEnabledUi(enabled);
+  saveReviewStatus.textContent = "";
+  saveReviewStatus.classList.remove("options__status--ok", "options__status--err");
+
+  try {
+    const stored = await loadAdoConfig();
+    await chrome.storage.local.set({
+      [ADO_CONFIG_KEY]: {
+        ...stored,
+        reviewEnabled: enabled,
+      },
+    });
+  } catch (error) {
+    // При ошибке возвращаем тоггл и раскрытие к прежнему состоянию.
+    reviewEnabledInput.checked = !enabled;
+    applyReviewEnabledUi(reviewEnabledInput.checked);
+    saveReviewStatus.textContent = "Ошибка сохранения: " + error.message;
+    saveReviewStatus.classList.add("options__status--err");
+  }
 }
 
 // --- Дизайн-лид: комбобокс с поиском пользователей -------------------------

@@ -803,6 +803,11 @@ function shouldShowReviewButton() {
     return false;
   }
 
+  // Тоггл в настройках: выключен — кнопку не показываем.
+  if (reviewConfigCache?.reviewEnabled === false) {
+    return false;
+  }
+
   // FR-002 / Q-003: ограничение по типу исходной задачи, если задано в настройках.
   const allowedTypes = parseReviewDesignTypes(reviewConfigCache?.reviewDesignTypes);
   if (!allowedTypes.length) {

@@ -20,6 +20,8 @@ export const DEFAULT_ADO_CONFIG = {
   pat: "",
   /**
    * Настройки сценария «Создать задачу на ревью».
+   * `reviewEnabled` — включать ли сценарий: тоггл в настройках; при `false` блок свёрнут
+   *   и кнопка Design Review Task на форме WI не показывается.
    * `reviewProject` — Team Project, в котором всегда создаётся задача на ревью
    *   (независимо от `project` в основных настройках / проекта исходной WI).
    * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`).
@@ -38,6 +40,7 @@ export const DEFAULT_ADO_CONFIG = {
    *   назначается на этого пользователя. Пусто — не назначать.
    * `reviewDesignLeadName` — отображаемое имя дизайн-лида (для показа в поле настроек).
    */
+  reviewEnabled: true,
   reviewProject: "B2B Design System",
   reviewWorkItemType: "Review",
   reviewTemplateId: "251d335a-fe7f-4ac3-afb0-7417eb9e4689",
