@@ -319,15 +319,15 @@ Background читает `manifest.json` с GitHub raw URL репозитория
 Функция `shouldShowReviewButton()` / `addReviewButton()`:
 
 1. На странице есть форма work item.
-2. Из URL извлечён номер сохранённой задачи:
-   - `/_workitems/edit/{id}` или `/_workitems/view/{id}`;
-   - либо query `?id=` / `?workitem=`.
+2. Извлечён номер сохранённой задачи:
+   - из URL: `/_workitems/edit/{id}` / `/_workitems/view/{id}`, либо query/hash `id` / `workitem` / `witd`;
+   - либо из DOM формы (шапка / ссылки) — для панели списка на Queries/Backlogs, где URL остаётся `/_queries/query/{guid}/` без номера WI.
 3. На форме **создания** без id кнопка **не** показывается.
 4. `reviewEnabled !== false` (тоггл в настройках; отсутствие поля = включено, как дефолт).
 5. Если `reviewDesignTypes` непустой — тип исходной WI должен совпасть (без учёта регистра). Дефолт: `Task,Mockup`.
 6. Если тип не удалось прочитать из DOM, а список типов задан — кнопку **не** показывать.
 
-Монтирование устойчиво к SPA-перерисовкам: `MutationObserver` на `document.body` + реакция на изменение `adoConfig` в storage.
+Монтирование устойчиво к SPA-перерисовкам: debounced `MutationObserver` на `document.body` + реакция на изменение `adoConfig` в storage. Тулбар и тип WI ищутся только внутри формы work item (не в гриде/command bar Queries), чтобы не вмешиваться в загрузку панели.
 
 ### Как выглядит кнопка
 

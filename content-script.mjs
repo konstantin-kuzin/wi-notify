@@ -724,10 +724,9 @@ const REVIEW_TOOLBAR_SELECTORS = [
   ".work-item-form-main-header .work-item-form-toolbar-container",
   ".work-item-form-headerContent .work-item-form-toolbar-container",
   ".work-item-form-toolbar-container",
-  // Новый Bolt UI (dev.azure.com)
+  // Новый Bolt UI (dev.azure.com) — только внутри формы WI
   ".work-item-form-header .bolt-header-commandbar .ms-CommandBar-primaryCommands",
   ".work-item-form-header .ms-CommandBar-primaryCommands",
-  ".bolt-header-commandbar .ms-CommandBar-primaryCommands",
 ];
 
 let reviewConfigCache = null;
@@ -739,7 +738,28 @@ function parseReviewDesignTypes(value) {
     .filter(Boolean);
 }
 
-function getSourceWorkItemId() {
+function parsePositiveWorkItemId(value) {
+  const text = String(value ?? "").trim();
+  if (!/^\d{1,9}$/.test(text)) {
+    return null;
+  }
+
+  const id = Number(text);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function getWorkItemFormRoot() {
+  const form = document.querySelector(
+    ".work-item-form, .witform-layout-resizable, [class*='work-item-form']",
+  );
+  return form instanceof HTMLElement ? form : null;
+}
+
+/**
+ * Id из URL полной формы (`/_workitems/edit/{id}`) или query/hash.
+ * На странице Queries в панели справа URL остаётся `/_queries/query/{guid}/` — тогда null.
+ */
+function getSourceWorkItemIdFromLocation() {
   const editMatch = location.href.match(/_workitems\/(?:edit|view)\/(\d+)/i);
   if (editMatch) {
     return Number(editMatch[1]);
@@ -747,9 +767,18 @@ function getSourceWorkItemId() {
 
   try {
     const url = new URL(location.href);
-    const fromQuery = url.searchParams.get("id") || url.searchParams.get("workitem");
-    if (fromQuery && /^\d+$/.test(fromQuery)) {
-      return Number(fromQuery);
+    for (const key of ["id", "workitem", "witd"]) {
+      const fromQuery = url.searchParams.get(key);
+      const parsed = parsePositiveWorkItemId(fromQuery);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+
+    const hash = url.hash || "";
+    const fromHash = hash.match(/(?:^|[?&#])(?:id|workitem|witd)=(\d{1,9})\b/i);
+    if (fromHash) {
+      return Number(fromHash[1]);
     }
   } catch (_error) {
     // ignore
@@ -758,17 +787,144 @@ function getSourceWorkItemId() {
   return null;
 }
 
+/**
+ * Id из DOM формы WI — нужен для панели списка (Queries / Backlogs), где URL без номера.
+ * Ищем только внутри формы, не в гриде результатов.
+ */
+function getSourceWorkItemIdFromDom() {
+  const form = getWorkItemFormRoot();
+  if (!form) {
+    return null;
+  }
+
+  const idNodeSelectors = [
+    ".work-item-form-id",
+    ".work-item-form-header .work-item-form-id",
+    ".work-item-form-main-header .work-item-form-id",
+    ".work-item-form-headerContent .work-item-form-id",
+    "[data-testid='work-item-id']",
+  ];
+
+  for (const selector of idNodeSelectors) {
+    const node = form.querySelector(selector);
+    const parsed = parsePositiveWorkItemId(node?.textContent);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  for (const link of form.querySelectorAll('a[href*="_workitems/"]')) {
+    const href = link.getAttribute("href") || "";
+    const match = href.match(/_workitems\/(?:edit|view)\/(\d{1,9})/i);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  const header = form.querySelector(
+    ".work-item-form-main-header, .work-item-form-header, .work-item-form-headerContent",
+  );
+  if (header instanceof HTMLElement) {
+    for (const el of header.querySelectorAll("span, div, label, a, em, strong")) {
+      if (!(el instanceof HTMLElement)) {
+        continue;
+      }
+
+      // Чистый номер в шапке формы — обычно id WI рядом с типом/заголовком.
+      if (el.children.length > 0) {
+        continue;
+      }
+
+      if (el.closest(".work-item-form-toolbar-container, .menu-bar, .ms-CommandBar, .bolt-header-commandbar")) {
+        continue;
+      }
+
+      const parsed = parsePositiveWorkItemId(el.textContent);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Запасной вариант для Queries/Backlogs: id из выделенной строки результатов.
+ */
+function getSourceWorkItemIdFromSelectedRow() {
+  const selectedRow = document.querySelector(
+    [
+      ".grid-row-selected",
+      ".grid-row.grid-row-current",
+      ".bolt-table-row[aria-selected='true']",
+      "tr[aria-selected='true']",
+      ".work-item-list-row.selected",
+    ].join(", "),
+  );
+
+  if (!(selectedRow instanceof HTMLElement)) {
+    return null;
+  }
+
+  for (const attr of ["data-itemid", "data-item-id", "data-id", "data-row-id"]) {
+    const parsed = parsePositiveWorkItemId(selectedRow.getAttribute(attr));
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  const idMatch = String(selectedRow.id || "").match(/(\d{4,9})/);
+  if (idMatch) {
+    return Number(idMatch[1]);
+  }
+
+  // Первая ячейка грида Queries обычно — ID.
+  const firstCell = selectedRow.querySelector(
+    ".grid-cell, .bolt-table-cell, td, [role='gridcell']",
+  );
+  return parsePositiveWorkItemId(firstCell?.textContent);
+}
+
+function getSourceWorkItemId() {
+  const fromLocation = getSourceWorkItemIdFromLocation();
+  if (fromLocation !== null) {
+    return fromLocation;
+  }
+
+  const fromDom = getSourceWorkItemIdFromDom();
+  if (fromDom !== null) {
+    return fromDom;
+  }
+
+  // Строка грида — только когда тулбар формы уже на месте.
+  // Иначе на Queries id находится слишком рано и кнопка может сесть не в ту форму.
+  if (findClassicMenuBar() || findReviewToolbarHost()) {
+    return getSourceWorkItemIdFromSelectedRow();
+  }
+
+  return null;
+}
+
 function getSourceWorkItemType() {
+  const form = getWorkItemFormRoot();
+  const root = form ?? document;
   const selectors = [
     ".work-item-form-header .work-item-type-icon",
+    ".work-item-form-main-header .work-item-type-icon",
     ".work-item-type-icon",
     "[class*='work-item-type-name']",
     "[class*='workitem-type-name']",
   ];
 
   for (const selector of selectors) {
-    const element = document.querySelector(selector);
+    const element = root.querySelector(selector);
     if (!element) {
+      continue;
+    }
+
+    // Вне формы иконка типа часто есть в гриде Queries — её не считаем.
+    if (form && !form.contains(element)) {
       continue;
     }
 
@@ -788,9 +944,7 @@ function getSourceWorkItemType() {
 }
 
 function isWorkItemFormPresent() {
-  return Boolean(
-    document.querySelector(".work-item-form, .witform-layout-resizable, [class*='work-item-form']"),
-  );
+  return Boolean(getWorkItemFormRoot());
 }
 
 function shouldShowReviewButton() {
@@ -824,8 +978,13 @@ function shouldShowReviewButton() {
 }
 
 function findReviewToolbarHost() {
+  const form = getWorkItemFormRoot();
+  if (!form) {
+    return null;
+  }
+
   for (const selector of REVIEW_TOOLBAR_SELECTORS) {
-    for (const candidate of document.querySelectorAll(selector)) {
+    for (const candidate of form.querySelectorAll(selector)) {
       if (candidate instanceof HTMLElement && isVisible(candidate)) {
         return candidate;
       }
@@ -1121,6 +1280,11 @@ function createReviewButton() {
 }
 
 function findClassicMenuBar() {
+  const form = getWorkItemFormRoot();
+  if (!form) {
+    return null;
+  }
+
   const selectors = [
     ".work-item-form-toolbar-container .menu-bar",
     ".workitem-tool-bar .menu-bar",
@@ -1128,7 +1292,7 @@ function findClassicMenuBar() {
   ];
 
   for (const selector of selectors) {
-    for (const candidate of document.querySelectorAll(selector)) {
+    for (const candidate of form.querySelectorAll(selector)) {
       if (candidate instanceof HTMLElement && isVisible(candidate)) {
         return candidate;
       }
@@ -1220,6 +1384,13 @@ function findSaveToolbarControl(host) {
 
 function addReviewButton() {
   const existing = document.querySelectorAll(`.${REVIEW_BUTTON_CONTAINER_CLASS}`);
+  const toolbarReady = Boolean(findClassicMenuBar() || findReviewToolbarHost());
+
+  // Пока детальная форма только грузится — не монтируем и не удаляем узлы,
+  // чтобы не мешать инициализации панели на Queries.
+  if (!toolbarReady) {
+    return false;
+  }
 
   if (!shouldShowReviewButton()) {
     existing.forEach((node) => node.remove());
@@ -1249,7 +1420,7 @@ function addReviewButton() {
     return true;
   }
 
-  // Bolt UI fallback.
+  // Bolt UI fallback — только внутри формы WI.
   const host = findReviewToolbarHost();
   if (!host) {
     return false;
@@ -1286,7 +1457,7 @@ function loadReviewConfigCache() {
       }
 
       reviewConfigCache = result?.[ADO_CONFIG_STORAGE_KEY] ?? null;
-      addReviewButton();
+      scheduleUiMount();
     });
   } catch (error) {
     console.warn(`${LOG_PREFIX} Failed to load review config.`, error);
@@ -1296,14 +1467,41 @@ function loadReviewConfigCache() {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[ADO_CONFIG_STORAGE_KEY]) {
     reviewConfigCache = changes[ADO_CONFIG_STORAGE_KEY].newValue ?? null;
-    addReviewButton();
+    scheduleUiMount();
   }
 });
 
+let uiMountTimerId = null;
+let isMutatingUi = false;
+
+function scheduleUiMount() {
+  if (uiMountTimerId !== null) {
+    return;
+  }
+
+  uiMountTimerId = window.setTimeout(() => {
+    uiMountTimerId = null;
+    if (isMutatingUi) {
+      scheduleUiMount();
+      return;
+    }
+
+    isMutatingUi = true;
+    try {
+      addAiButtonToDescriptionToolbar();
+      addReviewButton();
+    } finally {
+      isMutatingUi = false;
+    }
+  }, 200);
+}
+
 // Observe the DOM for changes to dynamically add the button
 const observer = new MutationObserver(() => {
-  addAiButtonToDescriptionToolbar();
-  addReviewButton();
+  if (isMutatingUi) {
+    return;
+  }
+  scheduleUiMount();
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
@@ -1320,16 +1518,13 @@ document.addEventListener("focusin", (event) => {
   }
 
   if (target === descriptionEditor || descriptionEditor.contains(target)) {
-    window.setTimeout(() => {
-      addAiButtonToDescriptionToolbar();
-    }, 0);
+    scheduleUiMount();
   }
 });
 
 // Initial check in case the toolbar is already present
-addAiButtonToDescriptionToolbar();
 loadReviewConfigCache();
-addReviewButton();
+scheduleUiMount();
 
 void pingAiBackground()
   .then((response) => {
