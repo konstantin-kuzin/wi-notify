@@ -2,12 +2,13 @@
 
 Chrome-расширение (Manifest V3) для **Azure DevOps Server / TFS** и **Azure DevOps Services**. Показывает work items, назначенные текущему пользователю, и добавляет действия в popup и в форму work item.
 
-Версия манифеста: **0.2.2**. Минимальная версия Chrome: **116**.
+Версия манифеста: **0.4.4**. Минимальная версия Chrome: **116**.
 
 Страница настроек: [`options.html`](../options.html), логика — [`options.mjs`](../options.mjs).  
 Фоновая оркестрация: [`background.mjs`](../background.mjs).  
 API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).  
-Конфиг: [`ado-config.mjs`](../ado-config.mjs).
+Конфиг: [`ado-config.mjs`](../ado-config.mjs).  
+Кастомные кнопки (поля WI): [`custom-wi-fields.mjs`](../custom-wi-fields.mjs).
 
 ---
 
@@ -29,6 +30,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 ### На странице work item в Azure DevOps
 
 - Пункт **Создать задачу на дизайн-ревью** / **New design review task** в меню **«...»** формы work item: из открытой задачи на дизайн в один клик создаёт связанную задачу типа `Review` по командному шаблону, проставляет связи и открывает результат в новой вкладке.
+- **Кастомные кнопки** в том же меню **«...»**: пользовательские пункты из настроек; каждый создаёт Work Item заданного типа с полями и связями из конфига кнопки.
 
 > Кнопка AI Rewrite Description в форме WI сейчас **выключена** (`AI_FEATURES_ENABLED = false` в `content-script.mjs`). Код и handlers в background сохранены, но в UI не монтируются. В этой документации AI-сценарий не описывается как рабочий.
 
@@ -48,8 +50,9 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
    - **Iteration Path** (`#iteration-path`) — фильтр основного списка; `All` (пустое значение) = без фильтра итерации.
    - **Период обновления** (`#refresh-interval-minutes`) — минуты, целое ≥ 1; по умолчанию `10`.
 4. Нажать **Сохранить**. Конфиг пишется в `chrome.storage.local` под ключом `adoConfig`. Background получает `chrome.storage.onChanged`, пересоздаёт alarm и обновляет список WI.
-5. (Опционально) В блоке **Задача на ревью** задать название продукта и дизайн-лида, нажать **Сохранить настройки ревью**.
-6. Убедиться, что в браузере выполнен вход в Azure DevOps на том же хосте (режим `session`).
+5. (Опционально) В блоке **Задача на ревью** задать название продукта и дизайн-лида, нажать **Сохранить**.
+6. (Опционально) В блоке **Кастомные кнопки для создания задач** добавить кнопки и сохранить каждую карточку.
+7. Убедиться, что в браузере выполнен вход в Azure DevOps на том же хосте (режим `session`).
 
 ### Разрешения (`permissions`)
 
@@ -114,6 +117,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `reviewDesignLead` | `""` | Да (hidden) | Identity для `System.AssignedTo` |
 | `reviewDesignLeadName` | `""` | Да | Отображаемое имя в комбобоксе |
 | `reviewDesignLeadAvatar` | `""` | Да (hidden) | URL аватара |
+| `customReviewButtons` | `[]` | Да (блок «Кастомные кнопки…») | Массив конфигов пользовательских кнопок в меню «...» (любой тип WI, не только Review) |
 
 ### Хардкод полей ревью при загрузке
 
@@ -310,7 +314,7 @@ Background читает `manifest.json` с GitHub raw URL репозитория
 1. **Тоггл** (`#review-enabled` → `reviewEnabled`) — слева от заголовка. Сохраняется сразу в `adoConfig`. Выключен: `#review-options-body` скрыт, пункт в меню «...» не монтируется. Включён (дефолт): поля раскрыты.
 2. **Название продукта** (`#review-product-name`) — если задано, заголовок Review: `[Продукт] <заголовок исходной задачи>`; если пусто — заголовок копируется как есть.
 3. **Дизайн-лид** — комбобокс поиска пользователей (`search-identities`, debounce 300 ms, минимум 2 символа). Если выбран — `System.AssignedTo` новой задачи; если очищен — поле не назначается.
-4. **Сохранить настройки ревью** (`#save-review-button`) — пишет `reviewProductName`, `reviewDesignLead*` (и текущий `reviewEnabled`) в `adoConfig` и снова проставляет хардкод-поля ревью из дефолтов.
+4. **Сохранить настройки** (`#save-review-button`) — пишет `reviewProductName`, `reviewDesignLead*` (и текущий `reviewEnabled`) в `adoConfig` и снова проставляет хардкод-поля ревью из дефолтов.
 
 Шаблон, родитель, тип WI и плейсхолдер Description в UI **не редактируются** (см. таблицу конфига выше).
 
@@ -459,18 +463,140 @@ content-script                     background                      Azure DevOps
 
 ---
 
+## Кастомные кнопки (создание WI из меню «...»)
+
+Сценарий дополняет Design Review Task: в настройках задаётся набор кнопок, каждая появляется пунктом в меню **«...»** формы work item (сразу **под** пунктом Design Review, а если его нет — в начале меню) и по клику создаёт Work Item произвольного типа в проекте **исходной** задачи.
+
+| Файл | Роль |
+|------|------|
+| [`options.html`](../options.html) / [`options.mjs`](../options.mjs) | UI блока «Кастомные кнопки для создания задач», сохранение в `adoConfig` |
+| [`content-script.mjs`](../content-script.mjs) | Пункты меню, фильтр `showForTypes`, сообщение `create-custom-wi` |
+| [`background.mjs`](../background.mjs) | Handler `create-custom-wi`, helpers для options (`get-wi-types` и др.) |
+| [`ado-api.mjs`](../ado-api.mjs) | `createCustomWorkItem`, связи |
+| [`custom-wi-fields.mjs`](../custom-wi-fields.mjs) | `resolveCustomTitle`, `buildCustomWorkItemFields` (без chrome/DOM) |
+| [`ado-config.mjs`](../ado-config.mjs) | Поле `customReviewButtons` в `DEFAULT_ADO_CONFIG` / `loadAdoConfig` |
+
+### Модель `customReviewButtons`
+
+Массив в `adoConfig` (ключ storage `adoConfig`). Имя поля историческое; кнопка создаёт **любой** тип WI из списка типов проекта, не только `Review`. При `loadAdoConfig()` всегда нормализуется в массив (иначе `[]`).
+
+| Поле | Тип | Смысл |
+|------|-----|--------|
+| `id` | string | Стабильный id кнопки (для `create-custom-wi` и DOM) |
+| `name` | string | Подпись пункта в меню «...» |
+| `wiType` | string | Тип создаваемого WI |
+| `wiTypeIcon` | `{ url, color }` | Метаданные иконки типа (из списка типов проекта) |
+| `title` | string | Заголовок, если не копировать из исходной |
+| `titleFromParent` | boolean | `true` — брать `System.Title` исходной WI |
+| `titlePrefix` | string | При `titleFromParent`: префикс **без пробела** перед title (`[UX]` + `Foo` → `[UX]Foo`) |
+| `assignedTo` / `assignedToName` / `assignedToAvatar` | string | Identity для `System.AssignedTo` (+ UI комбобокса) |
+| `description` | string | Текст описания (в HTML с escape и `\n` → `<br>`), если не копировать |
+| `descriptionFromParent` | boolean | `true` — копировать `System.Description` исходной WI как есть (HTML) |
+| `tags` | string[] | Теги → `System.Tags` через `"; "` |
+| `showForTypes` | string[] | Типы **исходной** WI, для которых показывать кнопку; пусто = все |
+| `links` | object[] | Связи после создания (см. ниже) |
+
+Элемент `links[]`:
+
+| Поле | Смысл |
+|------|--------|
+| `relType` | Reference name типа связи ADO (например Hierarchy-Reverse / Parent) |
+| `targetId` / `targetTitle` | Целевая WI из поиска (если не `toParent`) |
+| `toParent` | `true` — цель связи = исходная WI, из которой нажали кнопку |
+
+### Настройки (options)
+
+Блок **Кастомные кнопки для создания задач** (`#custom-buttons-section`):
+
+1. Список карточек (`#custom-buttons-list`) + **+ Добавить кнопку**.
+2. На карточке: название кнопки, тип создаваемой задачи, «Где показывать» (`showForTypes`), название / префикс / «из исходной», assignee, теги, описание / «из исходной», блок **Связать** (`+ Добавить ссылку`).
+3. **Сохранить** на карточке пишет весь массив `customReviewButtons` в storage (`saveCustomButtons`).
+4. Валидация перед сохранением: непустые `name` и `wiType`; если не `titleFromParent` — непустой `title`.
+
+Списки **типа WI** и подсказки тегов / «Где показывать» берутся из проекта поля **Проект** в основных настройках (не из `reviewProject`). Кэш типов и тегов сбрасывается при смене коллекции/проекта и после сохранения основных настроек (`refreshCustomButtonTypeFields` убирает чипы типов, которых нет в новом проекте). Disabled-типы в списке не показываются.
+
+### Когда показывается пункт меню
+
+`addCustomOverflowMenuItems()` / `customButtonVisibleForSource()`:
+
+1. Есть форма WI и извлечён номер сохранённой задачи (как у Design Review).
+2. В `customReviewButtons` есть кнопки, прошедшие фильтр типов.
+3. `showForTypes` пуст **или** тип исходной WI не определён — пункт **показывается** (fail-open).
+4. Иначе тип исходной должен совпасть с одним из `showForTypes` (без учёта регистра).
+5. Порядок: сразу после пункта Design Review Task; если пункта ревью нет — с начала меню `ul.menu`.
+
+### Основной сценарий (пользователь)
+
+1. В настройках добавить кнопку, заполнить поля, сохранить карточку.
+2. Открыть сохранённую WI подходящего типа в Azure DevOps.
+3. Меню **«...»** → выбрать пункт с `name` кнопки.
+4. Пункт в состоянии ожидания (подпись как у Design Review: «Создаём…» / «Creating…»), повторные клики блокируются.
+5. Созданная задача открывается в новой вкладке; toast — успех или предупреждение по связям.
+
+### Поток сообщений и API
+
+```text
+content-script                     background                      Azure DevOps
+     |                                  |                               |
+     |  create-custom-wi                |                               |
+     |  { buttonId, sourceId }          |                               |
+     |--------------------------------->|                               |
+     |                                  |  validateAdoConfig            |
+     |                                  |  find button in               |
+     |                                  |    customReviewButtons        |
+     |                                  |  GET workItems/{sourceId}     |
+     |                                  |------------------------------>|
+     |                                  |  POST …/wit/workitems/$Type   |
+     |                                  |------------------------------>|
+     |                                  |  PATCH relations (links[])    |
+     |                                  |------------------------------>|
+     |                                  |  tabs.create(newUrl)          |
+     |  { ok, id, url, title,           |                               |
+     |    warnings, tabOpened }         |                               |
+     |<---------------------------------|                               |
+```
+
+Сообщение: тип **`create-custom-wi`**.
+
+Helpers страницы настроек (options → background):
+
+| Сообщение | Назначение |
+|-----------|------------|
+| `get-wi-types` | Типы WI проекта (опциональный override `project` с формы) |
+| `get-wi-tags` | Теги проекта |
+| `get-wi-relation-types` | Типы связей для select «Тип связи» |
+| `search-work-items` | Поиск целевой WI для связи по id/title |
+
+### Что делает `createCustomWorkItem` / `buildCustomWorkItemFields`
+
+`createCustomWorkItem(config, buttonConfig, { sourceId })` в [`ado-api.mjs`](../ado-api.mjs):
+
+1. Читает исходную WI; без валидного id / без `wiType` / без итогового title — ошибка.
+2. Собирает поля через `buildCustomWorkItemFields` ([`custom-wi-fields.mjs`](../custom-wi-fields.mjs)):
+   - **Title** — `resolveCustomTitle`: свой `title`, либо source title, либо `titlePrefix` + source title **без разделяющего пробела**;
+   - **Area / Iteration** — всегда с исходной WI, если заданы;
+   - **Assigned To / Tags** — из конфига кнопки, если непустые;
+   - **Description** — при `descriptionFromParent` HTML исходной as-is; иначе plain text → escape + `<br>`.
+3. **Создание** — `POST {sourceProject}/_apis/wit/workitems/${wiType}` (`sourceProject` = `System.TeamProject` исходной, fallback на `config.project`). Это **не** `reviewProject`.
+4. **Связи** — для каждого валидного элемента `links`: `addWorkItemRelation`; при `toParent` цель = `sourceId`. Ошибки связей собираются в `warnings`, создание не откатывается.
+5. В ответе `title` — итоговый `System.Title` созданной задачи.
+
+---
+
 ## Структура файлов
 
 | Файл | Роль |
 |------|------|
 | `manifest.json` | MV3: права, host permissions, content scripts, entrypoints |
 | `background.mjs` | Service worker: alarm, badge, notifications, все message handlers, check updates |
-| `ado-api.mjs` | WIQL/REST ADO, статусы, комментарии, identities, `createReviewWorkItem` |
-| `ado-config.mjs` | `DEFAULT_ADO_CONFIG`, load/validate, хардкод полей ревью |
+| `ado-api.mjs` | WIQL/REST ADO, статусы, комментарии, identities, `createReviewWorkItem`, `createCustomWorkItem` |
+| `ado-config.mjs` | `DEFAULT_ADO_CONFIG`, load/validate, хардкод полей ревью, `customReviewButtons` |
+| `custom-wi-fields.mjs` | Чистая сборка полей кастомной WI (`resolveCustomTitle`, `buildCustomWorkItemFields`) |
+| `test/custom-wi-fields.test.mjs` | Node-тесты для `custom-wi-fields.mjs` |
 | `timesheet-api.mjs` | Запись и верификация усилий в TimeSheet |
 | `popup.html` / `popup.css` / `popup.mjs` | UI списка, фильтры, поиск, статус, комментарии, TimeSheet |
-| `options.html` / `options.css` / `options.mjs` | Основные настройки + задача на ревью (+ форма AI, не влияет на UI WI) |
-| `content-script.mjs` / `content-script.css` | Пункт создания Review в меню «...» формы WI |
+| `options.html` / `options.css` / `options.mjs` | Основные настройки + задача на ревью + кастомные кнопки (+ форма AI, не влияет на UI WI) |
+| `content-script.mjs` / `content-script.css` | Пункты Review и кастомных кнопок в меню «...» формы WI |
 | `ai-api.mjs` / `ai-config.mjs` | AI rewrite (UI выключен) |
 | `icons/*` | Иконки расширения и шрифты глифов; `icon-*-error.png` для badge ошибки |
 
@@ -495,10 +621,17 @@ content-script                     background                      Azure DevOps
 node --check background.mjs
 node --check ado-api.mjs
 node --check ado-config.mjs
+node --check custom-wi-fields.mjs
 node --check options.mjs
 node --check popup.mjs
 node --check content-script.mjs
 node --check timesheet-api.mjs
+```
+
+Тесты полей кастомных кнопок:
+
+```bash
+node --test test/custom-wi-fields.test.mjs
 ```
 
 Установка: режим разработчика в `chrome://extensions`, «Загрузить распакованное».

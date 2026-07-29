@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --text: #111;
-  --muted: #555;
+  --muted: #777;
   --border: #cfcfcf;
   --accent: #0b5cab;
   --label-width: 168px;
@@ -485,7 +485,9 @@ select.options__input {
 
 .options__status {
   font-size: 13px;
+  line-height: 1.35;
   color: var(--muted);
+  min-height: 1.35em;
 }
 
 .options__status--ok {
@@ -646,7 +648,7 @@ select.options__input {
   max-width: 100%;
   padding: 2px 8px;
   border-radius: 2px;
-  background: #d1ebf6;
+  background: #dae7ec;
   font-size: 12px;
   line-height: 1.35;
   margin-left: 2px;

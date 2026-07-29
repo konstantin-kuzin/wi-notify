@@ -46,6 +46,20 @@ const aiServicePromptTextarea = document.querySelector("#ai-service-prompt");
 const saveAiButton = document.querySelector("#save-ai-button");
 const saveAiStatus = document.querySelector("#save-ai-status");
 
+/**
+ * Единый статус сохранения рядом с кнопкой.
+ * @param {HTMLElement | null} el
+ * @param {string} message
+ * @param {"ok" | "err" | ""} [kind]
+ */
+function setOptionsStatus(el, message, kind = "") {
+  if (!el) return;
+  el.textContent = message;
+  el.classList.remove("options__status--ok", "options__status--err");
+  if (kind === "ok") el.classList.add("options__status--ok");
+  if (kind === "err") el.classList.add("options__status--err");
+}
+
 void init();
 
 async function init() {
@@ -150,8 +164,7 @@ async function buildAiConfigForSave() {
 }
 
 async function handleSubmit() {
-  saveStatus.textContent = "";
-  saveStatus.classList.remove("options__status--ok", "options__status--err");
+  setOptionsStatus(saveStatus, "");
 
   const stored = await loadAdoConfig();
   const merged = {
@@ -165,8 +178,7 @@ async function handleSubmit() {
   const errors = validateAdoConfig(merged);
 
   if (errors.length > 0) {
-    saveStatus.textContent = errors.join(" ");
-    saveStatus.classList.add("options__status--err");
+    setOptionsStatus(saveStatus, errors.join(" "), "err");
     return;
   }
 
@@ -177,8 +189,7 @@ async function handleSubmit() {
     console.log('Config saved successfully:', merged);
   } catch (error) {
     console.error('Failed to save config:', error);
-    saveStatus.textContent = "Ошибка сохранения: " + error.message;
-    saveStatus.classList.add("options__status--err");
+    setOptionsStatus(saveStatus, "Ошибка сохранения: " + error.message, "err");
     return;
   }
 
@@ -195,13 +206,11 @@ async function handleSubmit() {
 
   await refreshCustomButtonTypeFields();
 
-  saveStatus.textContent = "Сохранено. Список work items обновится автоматически.";
-  saveStatus.classList.add("options__status--ok");
+  setOptionsStatus(saveStatus, "Сохранено. Список work items обновится автоматически.", "ok");
 }
 
 async function handleReviewSubmit() {
-  saveReviewStatus.textContent = "";
-  saveReviewStatus.classList.remove("options__status--ok", "options__status--err");
+  setOptionsStatus(saveReviewStatus, "");
 
   const stored = await loadAdoConfig();
   const merged = {
@@ -224,8 +233,7 @@ async function handleReviewSubmit() {
   const errors = validateReviewConfig(merged);
 
   if (errors.length > 0) {
-    saveReviewStatus.textContent = errors.join(" ");
-    saveReviewStatus.classList.add("options__status--err");
+    setOptionsStatus(saveReviewStatus, errors.join(" "), "err");
     return;
   }
 
@@ -234,13 +242,11 @@ async function handleReviewSubmit() {
       [ADO_CONFIG_KEY]: merged,
     });
   } catch (error) {
-    saveReviewStatus.textContent = "Ошибка сохранения: " + error.message;
-    saveReviewStatus.classList.add("options__status--err");
+    setOptionsStatus(saveReviewStatus, "Ошибка сохранения: " + error.message, "err");
     return;
   }
 
-  saveReviewStatus.textContent = "Настройки задачи на ревью сохранены.";
-  saveReviewStatus.classList.add("options__status--ok");
+  setOptionsStatus(saveReviewStatus, "Настройки задачи на ревью сохранены.", "ok");
 }
 
 /**
@@ -259,8 +265,7 @@ function applyReviewEnabledUi(enabled) {
 async function handleReviewEnabledChange() {
   const enabled = reviewEnabledInput.checked;
   applyReviewEnabledUi(enabled);
-  saveReviewStatus.textContent = "";
-  saveReviewStatus.classList.remove("options__status--ok", "options__status--err");
+  setOptionsStatus(saveReviewStatus, "");
 
   try {
     const stored = await loadAdoConfig();
@@ -274,8 +279,7 @@ async function handleReviewEnabledChange() {
     // При ошибке возвращаем тоггл и раскрытие к прежнему состоянию.
     reviewEnabledInput.checked = !enabled;
     applyReviewEnabledUi(reviewEnabledInput.checked);
-    saveReviewStatus.textContent = "Ошибка сохранения: " + error.message;
-    saveReviewStatus.classList.add("options__status--err");
+    setOptionsStatus(saveReviewStatus, "Ошибка сохранения: " + error.message, "err");
   }
 }
 
@@ -466,15 +470,13 @@ function setupDesignLeadCombo() {
 }
 
 async function handleAiSubmit() {
-  saveAiStatus.textContent = "";
-  saveAiStatus.classList.remove("options__status--ok", "options__status--err");
+  setOptionsStatus(saveAiStatus, "");
 
   const merged = await buildAiConfigForSave();
   const errors = validateAiConfig(merged);
 
   if (errors.length > 0) {
-    saveAiStatus.textContent = errors.join(" ");
-    saveAiStatus.classList.add("options__status--err");
+    setOptionsStatus(saveAiStatus, errors.join(" "), "err");
     return;
   }
 
@@ -485,8 +487,7 @@ async function handleAiSubmit() {
     console.log('AI Config saved successfully:', merged);
   } catch (error) {
     console.error('Failed to save AI config:', error);
-    saveAiStatus.textContent = "Ошибка сохранения AI настроек: " + error.message;
-    saveAiStatus.classList.add("options__status--err");
+    setOptionsStatus(saveAiStatus, "Ошибка сохранения AI настроек: " + error.message, "err");
     return;
   }
 
@@ -495,15 +496,15 @@ async function handleAiSubmit() {
     await requestAiHostPermissionIfNeeded(merged.baseUrl);
   } catch (error) {
     console.error('AI host permission request failed:', error);
-    saveAiStatus.textContent = error instanceof Error
-      ? error.message
-      : String(error);
-    saveAiStatus.classList.add("options__status--err");
+    setOptionsStatus(
+      saveAiStatus,
+      error instanceof Error ? error.message : String(error),
+      "err",
+    );
     return;
   }
 
-  saveAiStatus.textContent = "AI настройки сохранены, доступ к AI API выдан.";
-  saveAiStatus.classList.add("options__status--ok");
+  setOptionsStatus(saveAiStatus, "AI настройки сохранены, доступ к AI API выдан.", "ok");
 }
 
 async function requestDevAzureHostPermissionIfNeeded(apiRoot) {
@@ -1125,17 +1126,34 @@ async function buildCard(config = null) {
   card.querySelector("[data-save]").addEventListener("click", async () => {
     const status = card.querySelector("[data-status]");
     const cfg = readCardConfig(card);
-    if (!cfg.name) { status.textContent = "Укажите название кнопки"; return; }
-    if (!cfg.wiType) { status.textContent = "Выберите тип Wi"; return; }
-    if (!cfg.titleFromParent && !cfg.title) { status.textContent = "Укажите название задачи или включите «из исходной задачи»"; return; }
+    if (!cfg.name) {
+      setOptionsStatus(status, "Укажите название кнопки", "err");
+      return;
+    }
+    if (!cfg.wiType) {
+      setOptionsStatus(status, "Выберите тип Wi", "err");
+      return;
+    }
+    if (!cfg.titleFromParent && !cfg.title) {
+      setOptionsStatus(status, "Укажите название задачи или включите «из исходной задачи»", "err");
+      return;
+    }
 
-    const stored = await loadAdoConfig();
-    const buttons = Array.isArray(stored.customReviewButtons) ? [...stored.customReviewButtons] : [];
-    const idx = buttons.findIndex((b) => b.id === cfg.id);
-    if (idx >= 0) buttons[idx] = cfg; else buttons.push(cfg);
-    await saveCustomButtons(buttons);
-    status.textContent = "Сохранено ✓";
-    setTimeout(() => { status.textContent = ""; }, 2000);
+    try {
+      const stored = await loadAdoConfig();
+      const buttons = Array.isArray(stored.customReviewButtons) ? [...stored.customReviewButtons] : [];
+      const idx = buttons.findIndex((b) => b.id === cfg.id);
+      if (idx >= 0) buttons[idx] = cfg; else buttons.push(cfg);
+      await saveCustomButtons(buttons);
+      setOptionsStatus(status, "Сохранено.", "ok");
+      setTimeout(() => { setOptionsStatus(status, ""); }, 2000);
+    } catch (error) {
+      setOptionsStatus(
+        status,
+        "Ошибка сохранения: " + (error instanceof Error ? error.message : String(error)),
+        "err",
+      );
+    }
   });
 
   card.querySelector("[data-remove]").addEventListener("click", async () => {
