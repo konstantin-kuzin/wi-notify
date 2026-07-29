@@ -189,13 +189,13 @@
 
       <section class="options__form" id="custom-buttons-section">
         <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Свои кнопки ревью</legend>
+          <legend class="options__fieldset-legend">Свои кнопки</legend>
           <p class="options__hint">
-            Каждая кнопка появится на форме задачи справа от «Design Review Task» и создаст свой Work Item.
+            Каждая кнопка появится в меню «…» формы задачи под «Design Review Task» и создаст свой Work Item.
           </p>
           <div id="custom-buttons-list" class="custom-buttons__list"></div>
           <button class="options__button options__button--secondary" type="button" id="add-custom-button">
-            + Добавить своё ревью
+            + Добавить кнопку
           </button>
         </fieldset>
       </section>
@@ -214,13 +214,24 @@
             <select class="options__input" data-field="wiType"></select>
           </label>
 
+          <div class="options__field">
+            <span class="options__label">Показывать для типов задач</span>
+            <div class="custom-tags" data-types>
+              <div class="custom-tags__chips" data-types-chips></div>
+              <input class="options__input" type="text" data-types-input autocomplete="off"
+                placeholder="Выберите типы задач…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-types-list role="listbox" hidden></ul>
+            </div>
+            <span class="options__hint">Пусто — кнопка показывается на задачах всех типов.</span>
+          </div>
+
           <label class="options__field">
             <span class="options__label">Название задачи</span>
             <input class="options__input" type="text" data-field="title" autocomplete="off">
           </label>
           <label class="custom-card__checkbox">
             <input type="checkbox" data-field="titleFromParent">
-            <span>Взять название из задачи родителя</span>
+            <span>Взять название из исходной задачи</span>
           </label>
 
           <div class="options__field">
@@ -247,11 +258,15 @@
             <span class="options__label">Описание</span>
             <textarea class="options__textarea" data-field="description" rows="4"></textarea>
           </label>
+          <label class="custom-card__checkbox">
+            <input type="checkbox" data-field="descriptionFromParent">
+            <span>Скопировать описание из исходной задачи</span>
+          </label>
 
-          <div class="options__field">
+          <div class="options__field custom-links-field">
             <span class="options__label">Связать</span>
-            <div class="custom-links" data-links></div>
             <button class="options__button options__button--secondary" type="button" data-add-link>+ Добавить ссылку</button>
+            <div class="custom-links" data-links></div>
           </div>
 
           <div class="options__actions">
@@ -264,14 +279,10 @@
       <template id="custom-link-card-template">
         <div class="custom-link" data-link-card>
           <button class="custom-link__remove" type="button" data-link-remove title="Удалить ссылку" aria-label="Удалить ссылку">×</button>
-          <div class="options__field">
+          <label class="options__field">
             <span class="options__label">Тип связи</span>
-            <div class="options__combo" data-link-type-combo>
-              <input class="options__input" type="text" data-link-type-input autocomplete="off"
-                placeholder="Начните вводить тип связи…" role="combobox" aria-expanded="false" aria-autocomplete="list">
-              <ul class="options__combo-list" data-link-type-list role="listbox" hidden></ul>
-            </div>
-          </div>
+            <select class="options__input" data-link-type></select>
+          </label>
           <div class="options__field">
             <span class="options__label">Wi</span>
             <div class="options__combo" data-wi-combo>
@@ -282,7 +293,7 @@
           </div>
           <label class="custom-card__checkbox">
             <input type="checkbox" data-link-to-parent>
-            <span>Привязать к родительской задаче (той, где нажата кнопка)</span>
+            <span>Привязать к исходной задаче (той, где нажата кнопка)</span>
           </label>
         </div>
       </template>

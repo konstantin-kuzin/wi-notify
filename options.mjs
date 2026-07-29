@@ -679,9 +679,13 @@ function readCardConfig(card) {
     .map((chip) => chip.dataset.value)
     .filter(Boolean);
 
+  const showForTypes = Array.from(card.querySelectorAll("[data-types-chips] .custom-tags__chip"))
+    .map((chip) => chip.dataset.value)
+    .filter(Boolean);
+
   const links = Array.from(card.querySelectorAll("[data-link-card]"))
     .map((linkCard) => ({
-      relType: linkCard.dataset.relType || "",
+      relType: linkCard.querySelector("[data-link-type]")?.value ?? "",
       targetId: Number(linkCard.dataset.targetId || 0),
       targetTitle: linkCard.dataset.targetTitle || "",
       toParent: linkCard.querySelector("[data-link-to-parent]")?.checked ?? false,
@@ -699,7 +703,9 @@ function readCardConfig(card) {
     assignedToName: card.dataset.assignedToName || "",
     assignedToAvatar: card.dataset.assignedToAvatar || "",
     description: val('[data-field="description"]').value,
+    descriptionFromParent: val('[data-field="descriptionFromParent"]').checked,
     tags,
+    showForTypes,
     links,
   };
 }
@@ -722,44 +728,17 @@ async function fillWiTypeSelect(select, selected) {
  * Комбобокс «Тип связи» с поиском по мере ввода (как «Назначить на»).
  * Выбранный тип хранится в linkCard.dataset.relType (referenceName).
  */
-async function wireRelationTypeCombo(linkCard, presetRelType) {
-  const input = linkCard.querySelector("[data-link-type-input]");
-  const listEl = linkCard.querySelector("[data-link-type-list]");
+/** Наполняет нативный select типов связи (значение — referenceName, подпись — name). */
+async function fillRelationSelect(select, selected) {
   const rels = await getRelationTypes();
-  const relName = (ref) => rels.find((r) => r.referenceName === ref)?.name || ref;
-
-  if (presetRelType) {
-    linkCard.dataset.relType = presetRelType;
-    input.value = relName(presetRelType);
+  select.innerHTML = "";
+  for (const r of rels) {
+    const opt = document.createElement("option");
+    opt.value = r.referenceName;
+    opt.textContent = r.name;
+    if (r.referenceName === selected) opt.selected = true;
+    select.appendChild(opt);
   }
-
-  const render = (items) => {
-    listEl.innerHTML = "";
-    for (const r of items) {
-      const li = document.createElement("li");
-      li.className = "options__combo-item";
-      li.setAttribute("role", "option");
-      li.textContent = r.name;
-      li.addEventListener("mousedown", (ev) => {
-        ev.preventDefault();
-        linkCard.dataset.relType = r.referenceName;
-        input.value = r.name;
-        listEl.hidden = true;
-      });
-      listEl.appendChild(li);
-    }
-    listEl.hidden = items.length === 0;
-  };
-
-  input.addEventListener("focus", () => render(rels));
-  input.addEventListener("input", () => {
-    linkCard.dataset.relType = "";
-    const q = input.value.trim().toLowerCase();
-    render(q ? rels.filter((r) => r.name.toLowerCase().includes(q)) : rels);
-  });
-  input.addEventListener("blur", () => {
-    window.setTimeout(() => { listEl.hidden = true; }, 150);
-  });
 }
 
 function addTagChip(card, value) {
@@ -830,10 +809,88 @@ function wireTagsInput(card) {
   });
 }
 
+/** Чип типа задачи в поле «Показывать для типов» (переиспользует стиль тэгов). */
+function addTypeChip(card, value) {
+  const name = String(value ?? "").trim();
+  if (!name) return false;
+  const chips = card.querySelector("[data-types-chips]");
+  if (!chips) return false;
+  if (Array.from(chips.children).some((c) => c.dataset.value?.toLowerCase() === name.toLowerCase())) return false;
+  const chip = document.createElement("span");
+  chip.className = "custom-tags__chip";
+  chip.dataset.value = name;
+  const text = document.createElement("span");
+  text.textContent = name;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.addEventListener("click", () => chip.remove());
+  chip.append(text, remove);
+  chips.appendChild(chip);
+  return true;
+}
+
+/**
+ * «Показывать для типов»: мультивыбор с поиском по типам проекта. В отличие от
+ * тэгов, добавляем только реально существующие типы (иначе фильтр не совпадёт).
+ */
+function wireTypesInput(card) {
+  const input = card.querySelector("[data-types-input]");
+  const list = card.querySelector("[data-types-list]");
+  if (!input || !list) return;
+
+  const chosenLower = () => new Set(
+    Array.from(card.querySelectorAll("[data-types-chips] .custom-tags__chip"))
+      .map((c) => (c.dataset.value || "").toLowerCase()),
+  );
+
+  const render = async () => {
+    const q = input.value.trim().toLowerCase();
+    const chosen = chosenLower();
+    const names = (await getWiTypes()).map((t) => t.name)
+      .filter((t) => !chosen.has(t.toLowerCase()) && (!q || t.toLowerCase().includes(q)))
+      .slice(0, 10);
+    list.innerHTML = "";
+    for (const t of names) {
+      const li = document.createElement("li");
+      li.className = "options__combo-item";
+      li.setAttribute("role", "option");
+      li.textContent = t;
+      li.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        addTypeChip(card, t);
+        input.value = "";
+        list.hidden = true;
+      });
+      list.appendChild(li);
+    }
+    list.hidden = names.length === 0;
+  };
+
+  input.addEventListener("focus", render);
+  input.addEventListener("input", render);
+  input.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = input.value.trim().toLowerCase();
+    if (!q) return;
+    const names = (await getWiTypes()).map((t) => t.name);
+    const pick = names.find((t) => t.toLowerCase() === q) || names.find((t) => t.toLowerCase().includes(q));
+    if (pick) {
+      addTypeChip(card, pick);
+      input.value = "";
+      list.hidden = true;
+    }
+  });
+  input.addEventListener("blur", () => {
+    window.setTimeout(() => { list.hidden = true; }, 150);
+  });
+}
+
 async function addLinkCard(card, link = null) {
   const tpl = document.getElementById("custom-link-card-template");
   const node = tpl.content.firstElementChild.cloneNode(true);
-  await wireRelationTypeCombo(node, link?.relType ?? "");
+  await fillRelationSelect(node.querySelector("[data-link-type]"), link?.relType ?? "");
 
   const input = node.querySelector("[data-wi-input]");
   const listEl = node.querySelector("[data-wi-list]");
@@ -973,9 +1030,18 @@ async function buildCard(config = null) {
   fromParent.addEventListener("change", syncTitleDisabled);
   syncTitleDisabled();
 
+  const descInput = card.querySelector('[data-field="description"]');
+  const descFromParent = card.querySelector('[data-field="descriptionFromParent"]');
+  descFromParent.checked = Boolean(config?.descriptionFromParent);
+  const syncDescDisabled = () => { descInput.disabled = descFromParent.checked; };
+  descFromParent.addEventListener("change", syncDescDisabled);
+  syncDescDisabled();
+
   wireAssignee(card, config);
   wireTagsInput(card);
   for (const t of config?.tags ?? []) addTagChip(card, t);
+  wireTypesInput(card);
+  for (const t of config?.showForTypes ?? []) addTypeChip(card, t);
   for (const l of config?.links ?? []) await addLinkCard(card, l);
 
   card.querySelector("[data-add-link]").addEventListener("click", () => addLinkCard(card));
@@ -985,7 +1051,7 @@ async function buildCard(config = null) {
     const cfg = readCardConfig(card);
     if (!cfg.name) { status.textContent = "Укажите название кнопки"; return; }
     if (!cfg.wiType) { status.textContent = "Выберите тип Wi"; return; }
-    if (!cfg.titleFromParent && !cfg.title) { status.textContent = "Укажите название задачи или включите «из родителя»"; return; }
+    if (!cfg.titleFromParent && !cfg.title) { status.textContent = "Укажите название задачи или включите «из исходной задачи»"; return; }
 
     const stored = await loadAdoConfig();
     const buttons = Array.isArray(stored.customReviewButtons) ? [...stored.customReviewButtons] : [];

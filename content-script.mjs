@@ -1604,8 +1604,20 @@ function customOverflowItemsCorrect(menu, buttons) {
  * Вставляет кастомные пункты в меню «...» сразу под Design Review Task.
  * @returns {boolean}
  */
+/**
+ * Кнопка видна для текущей задачи: список типов пуст (для всех) или тип исходной
+ * задачи входит в список. Если тип определить не удалось — показываем (fail-open).
+ */
+function customButtonVisibleForSource(cfg, sourceType) {
+  const types = Array.isArray(cfg?.showForTypes) ? cfg.showForTypes.filter(Boolean) : [];
+  if (!types.length || !sourceType) {
+    return true;
+  }
+  return types.some((t) => String(t).toLowerCase() === sourceType.toLowerCase());
+}
+
 function addCustomOverflowMenuItems() {
-  const buttons = Array.isArray(reviewConfigCache?.customReviewButtons)
+  const allButtons = Array.isArray(reviewConfigCache?.customReviewButtons)
     ? reviewConfigCache.customReviewButtons
     : [];
 
@@ -1613,6 +1625,9 @@ function addCustomOverflowMenuItems() {
   if (!menu) {
     return false;
   }
+
+  const sourceType = getSourceWorkItemType();
+  const buttons = allButtons.filter((cfg) => customButtonVisibleForSource(cfg, sourceType));
 
   if (!buttons.length || getSourceWorkItemId() === null) {
     menu.querySelectorAll(`.${CUSTOM_OVERFLOW_ITEM_CLASS}`).forEach((n) => n.remove());

@@ -1755,6 +1755,7 @@ export async function createCustomWorkItem(config, buttonConfig, source) {
     title: sourceTitle,
     areaPath: normalizeText(fields["System.AreaPath"]),
     iterationPath: normalizeText(fields["System.IterationPath"]),
+    description: fields["System.Description"] ?? "",
   });
 
   if (!String(createFields["System.Title"] ?? "").trim()) {

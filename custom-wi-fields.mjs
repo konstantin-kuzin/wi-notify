@@ -57,9 +57,17 @@ export function buildCustomWorkItemFields(buttonConfig, source) {
   if (tags) {
     fields["System.Tags"] = tags;
   }
-  const description = descriptionToHtml(buttonConfig?.description);
-  if (description) {
-    fields["System.Description"] = description;
+  if (buttonConfig?.descriptionFromParent) {
+    // Копируем описание исходной задачи как есть (это уже HTML из System.Description).
+    const sourceDescription = String(source?.description ?? "").trim();
+    if (sourceDescription) {
+      fields["System.Description"] = sourceDescription;
+    }
+  } else {
+    const description = descriptionToHtml(buttonConfig?.description);
+    if (description) {
+      fields["System.Description"] = description;
+    }
   }
   return fields;
 }
