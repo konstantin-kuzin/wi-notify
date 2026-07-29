@@ -255,3 +255,10 @@ div.wi-create-review-container {
 .wi-review-toast__close:hover {
   opacity: 1;
 }
+
+/* Иконка типа Wi в кастомном пункте меню «...» (картинка вместо глифа). */
+li.menu-item.wi-custom-review-overflow-item .wi-custom-review-icon img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}

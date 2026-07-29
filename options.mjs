@@ -615,3 +615,409 @@ function flattenIterations(nodes, result = []) {
 function getRefreshIntervalMinutesValue() {
   return Number.parseInt(refreshIntervalMinutesInput.value, 10);
 }
+
+
+const CUSTOM_MSG = {
+  types: "get-wi-types",
+  tags: "get-wi-tags",
+  relations: "get-wi-relation-types",
+  search: "search-work-items",
+};
+
+function sendBg(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(payload, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response ?? { ok: false, error: "Пустой ответ" });
+    });
+  });
+}
+
+async function saveCustomButtons(buttons) {
+  const stored = await loadAdoConfig();
+  const next = { ...stored, customReviewButtons: buttons };
+  await chrome.storage.local.set({ [ADO_CONFIG_KEY]: next });
+}
+
+let wiTypesCache = null;
+let relationTypesCache = null;
+let projectTagsCache = null;
+
+async function getWiTypes() {
+  if (!wiTypesCache) {
+    const r = await sendBg({ type: CUSTOM_MSG.types });
+    wiTypesCache = r.ok ? r.results : [];
+  }
+  return wiTypesCache;
+}
+async function getRelationTypes() {
+  if (!relationTypesCache) {
+    const r = await sendBg({ type: CUSTOM_MSG.relations });
+    relationTypesCache = r.ok ? r.results : [];
+  }
+  return relationTypesCache;
+}
+async function getProjectTags() {
+  if (!projectTagsCache) {
+    const r = await sendBg({ type: CUSTOM_MSG.tags });
+    projectTagsCache = r.ok ? r.results : [];
+  }
+  return projectTagsCache;
+}
+
+function readCardConfig(card) {
+  const val = (sel) => card.querySelector(sel);
+  const wiSelect = val('[data-field="wiType"]');
+  const selectedType = wiSelect?.value ?? "";
+  const iconUrl = wiSelect?.selectedOptions?.[0]?.dataset?.iconUrl ?? "";
+  const iconColor = wiSelect?.selectedOptions?.[0]?.dataset?.color ?? "";
+
+  const tags = Array.from(card.querySelectorAll("[data-tags-chips] .custom-tags__chip"))
+    .map((chip) => chip.dataset.value)
+    .filter(Boolean);
+
+  const links = Array.from(card.querySelectorAll("[data-link-card]"))
+    .map((linkCard) => ({
+      relType: linkCard.dataset.relType || "",
+      targetId: Number(linkCard.dataset.targetId || 0),
+      targetTitle: linkCard.dataset.targetTitle || "",
+      toParent: linkCard.querySelector("[data-link-to-parent]")?.checked ?? false,
+    }))
+    .filter((l) => l.relType && (l.toParent || l.targetId > 0));
+
+  return {
+    id: card.dataset.id,
+    name: val('[data-field="name"]').value.trim(),
+    wiType: selectedType,
+    wiTypeIcon: { url: iconUrl, color: iconColor },
+    title: val('[data-field="title"]').value.trim(),
+    titleFromParent: val('[data-field="titleFromParent"]').checked,
+    assignedTo: card.dataset.assignedTo || "",
+    assignedToName: card.dataset.assignedToName || "",
+    assignedToAvatar: card.dataset.assignedToAvatar || "",
+    description: val('[data-field="description"]').value,
+    tags,
+    links,
+  };
+}
+
+async function fillWiTypeSelect(select, selected) {
+  const types = await getWiTypes();
+  select.innerHTML = "";
+  for (const t of types) {
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name;
+    opt.dataset.iconUrl = t.iconUrl || "";
+    opt.dataset.color = t.color || "";
+    if (t.name === selected) opt.selected = true;
+    select.appendChild(opt);
+  }
+}
+
+/**
+ * Комбобокс «Тип связи» с поиском по мере ввода (как «Назначить на»).
+ * Выбранный тип хранится в linkCard.dataset.relType (referenceName).
+ */
+async function wireRelationTypeCombo(linkCard, presetRelType) {
+  const input = linkCard.querySelector("[data-link-type-input]");
+  const listEl = linkCard.querySelector("[data-link-type-list]");
+  const rels = await getRelationTypes();
+  const relName = (ref) => rels.find((r) => r.referenceName === ref)?.name || ref;
+
+  if (presetRelType) {
+    linkCard.dataset.relType = presetRelType;
+    input.value = relName(presetRelType);
+  }
+
+  const render = (items) => {
+    listEl.innerHTML = "";
+    for (const r of items) {
+      const li = document.createElement("li");
+      li.className = "options__combo-item";
+      li.setAttribute("role", "option");
+      li.textContent = r.name;
+      li.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        linkCard.dataset.relType = r.referenceName;
+        input.value = r.name;
+        listEl.hidden = true;
+      });
+      listEl.appendChild(li);
+    }
+    listEl.hidden = items.length === 0;
+  };
+
+  input.addEventListener("focus", () => render(rels));
+  input.addEventListener("input", () => {
+    linkCard.dataset.relType = "";
+    const q = input.value.trim().toLowerCase();
+    render(q ? rels.filter((r) => r.name.toLowerCase().includes(q)) : rels);
+  });
+  input.addEventListener("blur", () => {
+    window.setTimeout(() => { listEl.hidden = true; }, 150);
+  });
+}
+
+function addTagChip(card, value) {
+  const name = String(value ?? "").trim();
+  if (!name) return false;
+  const chips = card.querySelector("[data-tags-chips]");
+  if (!chips) return false;
+  if (Array.from(chips.children).some((c) => c.dataset.value?.toLowerCase() === name.toLowerCase())) return false;
+  const chip = document.createElement("span");
+  chip.className = "custom-tags__chip";
+  chip.dataset.value = name;
+  const text = document.createElement("span");
+  text.textContent = name;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.addEventListener("click", () => chip.remove());
+  chip.append(text, remove);
+  chips.appendChild(chip);
+  return true;
+}
+
+function wireTagsInput(card) {
+  const input = card.querySelector("[data-tags-input]");
+  const list = card.querySelector("[data-tags-list]");
+
+  // Фиксируем всё, что введено (в т.ч. несколько тэгов через запятую).
+  const commit = () => {
+    let added = false;
+    for (const part of String(input.value).split(",")) {
+      if (addTagChip(card, part)) added = true;
+    }
+    input.value = "";
+    if (list) list.hidden = true;
+    return added;
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      commit();
+    }
+  });
+  // Если пользователь ушёл из поля с недобавленным текстом — добавим как тэг.
+  input.addEventListener("blur", () => {
+    if (input.value.trim()) commit();
+  });
+  input.addEventListener("input", async () => {
+    if (!list) return;
+    const q = input.value.trim().toLowerCase();
+    list.innerHTML = "";
+    if (!q) { list.hidden = true; return; }
+    const tags = (await getProjectTags()).filter((t) => t.toLowerCase().includes(q)).slice(0, 8);
+    for (const t of tags) {
+      const li = document.createElement("li");
+      li.className = "options__combo-item";
+      li.setAttribute("role", "option");
+      li.textContent = t;
+      li.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        addTagChip(card, t);
+        input.value = "";
+        list.hidden = true;
+      });
+      list.appendChild(li);
+    }
+    list.hidden = tags.length === 0;
+  });
+}
+
+async function addLinkCard(card, link = null) {
+  const tpl = document.getElementById("custom-link-card-template");
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  await wireRelationTypeCombo(node, link?.relType ?? "");
+
+  const input = node.querySelector("[data-wi-input]");
+  const listEl = node.querySelector("[data-wi-list]");
+  if (link?.targetId) {
+    node.dataset.targetId = String(link.targetId);
+    node.dataset.targetTitle = link.targetTitle ?? "";
+    input.value = `#${link.targetId} ${link.targetTitle ?? ""}`.trim();
+  }
+
+  // Чекбокс «Привязать к родительской задаче»: цель связи — исходная задача,
+  // поэтому поиск Wi дизейблим (аналогично «Взять название из родителя»).
+  const toParent = node.querySelector("[data-link-to-parent]");
+  const syncParentMode = () => {
+    input.disabled = toParent.checked;
+    if (toParent.checked) {
+      listEl.hidden = true;
+    }
+  };
+  toParent.checked = Boolean(link?.toParent);
+  toParent.addEventListener("change", syncParentMode);
+  syncParentMode();
+
+  let searchTimer = null;
+  input.addEventListener("input", () => {
+    node.dataset.targetId = "";
+    if (searchTimer) clearTimeout(searchTimer);
+    const q = input.value.trim();
+    if (!q) { listEl.hidden = true; return; }
+    searchTimer = setTimeout(async () => {
+      const r = await sendBg({ type: CUSTOM_MSG.search, query: q });
+      const results = r.ok ? r.results : [];
+      console.log("[WI-CUSTOM] поиск Wi:", { query: q, ok: r.ok, count: results.length, debug: r.debug, error: r.error });
+      listEl.innerHTML = "";
+      for (const wi of results) {
+        const li = document.createElement("li");
+        li.className = "options__combo-item";
+        li.setAttribute("role", "option");
+        const proj = wi.project ? ` · ${wi.project}` : "";
+        li.textContent = `#${wi.id} · ${wi.type}${proj} · ${wi.title}`;
+        li.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          node.dataset.targetId = String(wi.id);
+          node.dataset.targetTitle = wi.title;
+          input.value = `#${wi.id} ${wi.title}`;
+          listEl.hidden = true;
+        });
+        listEl.appendChild(li);
+      }
+      listEl.hidden = results.length === 0;
+    }, 250);
+  });
+
+  node.querySelector("[data-link-remove]").addEventListener("click", () => node.remove());
+  card.querySelector("[data-links]").appendChild(node);
+}
+
+/** Обновляет аватар выбранного исполнителя в поле карточки (по аналогии с design-лидом). */
+function updateAssigneeAvatar(card) {
+  const slot = card.querySelector("[data-assignee-avatar]");
+  const combo = card.querySelector("[data-assignee-combo]");
+  slot.innerHTML = "";
+  const name = card.dataset.assignedToName || "";
+
+  if (!name) {
+    combo.classList.remove("options__combo--has-avatar");
+    return;
+  }
+
+  slot.appendChild(createAvatar(name, card.dataset.assignedToAvatar || ""));
+  combo.classList.add("options__combo--has-avatar");
+}
+
+/**
+ * Комбобокс «Назначить на» карточки: поля identity те же, что использует
+ * существующий комбобокс дизайн-лида (renderDesignLeadList) — assignedTo/displayName/avatarUrl.
+ */
+function wireAssignee(card, preset) {
+  const input = card.querySelector("[data-assignee-input]");
+  const listEl = card.querySelector("[data-assignee-list]");
+
+  if (preset?.assignedTo) {
+    card.dataset.assignedTo = preset.assignedTo;
+    card.dataset.assignedToName = preset.assignedToName ?? "";
+    card.dataset.assignedToAvatar = preset.assignedToAvatar ?? "";
+    input.value = preset.assignedToName || preset.assignedTo;
+  }
+  updateAssigneeAvatar(card);
+
+  let timer = null;
+  input.addEventListener("input", () => {
+    card.dataset.assignedTo = "";
+    card.dataset.assignedToName = "";
+    card.dataset.assignedToAvatar = "";
+    updateAssigneeAvatar(card);
+    if (timer) clearTimeout(timer);
+    const q = input.value.trim();
+    if (!q) { listEl.hidden = true; return; }
+    timer = setTimeout(async () => {
+      const r = await sendBg({ type: SEARCH_IDENTITIES_MESSAGE_TYPE, query: q });
+      const results = r.ok ? r.results : [];
+      listEl.innerHTML = "";
+      for (const person of results) {
+        const li = document.createElement("li");
+        li.className = "options__combo-item";
+        li.setAttribute("role", "option");
+        li.textContent = person.displayName || person.uniqueName || "";
+        li.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          card.dataset.assignedTo = person.assignedTo || person.displayName || "";
+          card.dataset.assignedToName = person.displayName || person.uniqueName || "";
+          card.dataset.assignedToAvatar = person.avatarUrl || "";
+          input.value = card.dataset.assignedToName;
+          updateAssigneeAvatar(card);
+          listEl.hidden = true;
+        });
+        listEl.appendChild(li);
+      }
+      listEl.hidden = results.length === 0;
+    }, 250);
+  });
+}
+
+async function buildCard(config = null) {
+  const tpl = document.getElementById("custom-button-card-template");
+  const card = tpl.content.firstElementChild.cloneNode(true);
+  card.dataset.id = config?.id ?? `crb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  await fillWiTypeSelect(card.querySelector('[data-field="wiType"]'), config?.wiType ?? "");
+  card.querySelector('[data-field="name"]').value = config?.name ?? "";
+  card.querySelector('[data-field="title"]').value = config?.title ?? "";
+  card.querySelector('[data-field="description"]').value = config?.description ?? "";
+
+  const titleInput = card.querySelector('[data-field="title"]');
+  const fromParent = card.querySelector('[data-field="titleFromParent"]');
+  fromParent.checked = Boolean(config?.titleFromParent);
+  const syncTitleDisabled = () => { titleInput.disabled = fromParent.checked; };
+  fromParent.addEventListener("change", syncTitleDisabled);
+  syncTitleDisabled();
+
+  wireAssignee(card, config);
+  wireTagsInput(card);
+  for (const t of config?.tags ?? []) addTagChip(card, t);
+  for (const l of config?.links ?? []) await addLinkCard(card, l);
+
+  card.querySelector("[data-add-link]").addEventListener("click", () => addLinkCard(card));
+
+  card.querySelector("[data-save]").addEventListener("click", async () => {
+    const status = card.querySelector("[data-status]");
+    const cfg = readCardConfig(card);
+    if (!cfg.name) { status.textContent = "Укажите название кнопки"; return; }
+    if (!cfg.wiType) { status.textContent = "Выберите тип Wi"; return; }
+    if (!cfg.titleFromParent && !cfg.title) { status.textContent = "Укажите название задачи или включите «из родителя»"; return; }
+
+    const stored = await loadAdoConfig();
+    const buttons = Array.isArray(stored.customReviewButtons) ? [...stored.customReviewButtons] : [];
+    const idx = buttons.findIndex((b) => b.id === cfg.id);
+    if (idx >= 0) buttons[idx] = cfg; else buttons.push(cfg);
+    await saveCustomButtons(buttons);
+    status.textContent = "Сохранено ✓";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  });
+
+  card.querySelector("[data-remove]").addEventListener("click", async () => {
+    const stored = await loadAdoConfig();
+    const buttons = (stored.customReviewButtons ?? []).filter((b) => b.id !== card.dataset.id);
+    await saveCustomButtons(buttons);
+    card.remove();
+  });
+
+  return card;
+}
+
+async function initCustomButtons() {
+  const list = document.getElementById("custom-buttons-list");
+  const addBtn = document.getElementById("add-custom-button");
+  if (!list || !addBtn) return;
+
+  const stored = await loadAdoConfig();
+  for (const cfg of stored.customReviewButtons ?? []) {
+    list.appendChild(await buildCard(cfg));
+  }
+  addBtn.addEventListener("click", async () => {
+    list.appendChild(await buildCard(null));
+  });
+}
+
+void initCustomButtons();
