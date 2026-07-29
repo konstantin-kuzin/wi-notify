@@ -1591,7 +1591,8 @@ export async function fetchProjectWorkItemTypes(config) {
     referenceName: normalizeText(entry?.referenceName),
     iconUrl: normalizeText(entry?.icon?.url),
     color: normalizeText(entry?.color),
-  })).filter((t) => t.name);
+    isDisabled: Boolean(entry?.isDisabled),
+  })).filter((t) => t.name && !t.isDisabled);
 }
 
 /**

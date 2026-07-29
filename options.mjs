@@ -66,10 +66,14 @@ async function init() {
   });
 
   apiRootInput.addEventListener("input", () => {
+    invalidateWiTypesCache();
+    invalidateProjectTagsCache();
     void fetchAndPopulateIterations();
   });
 
   projectInput.addEventListener("input", () => {
+    invalidateWiTypesCache();
+    invalidateProjectTagsCache();
     void fetchAndPopulateIterations();
   });
 
@@ -188,6 +192,8 @@ async function handleSubmit() {
   refreshIntervalMinutesInput.value = String(savedConfig.refreshIntervalMinutes);
   await fetchAndPopulateIterations(savedConfig.iterationPath ?? "");
   console.log('Form values set to:', apiRootInput.value, projectInput.value, iterationPathSelect.value);
+
+  await refreshCustomButtonTypeFields();
 
   saveStatus.textContent = "Сохранено. Список work items обновится автоматически.";
   saveStatus.classList.add("options__status--ok");
@@ -643,14 +649,37 @@ async function saveCustomButtons(buttons) {
 }
 
 let wiTypesCache = null;
+/** Проект, для которого закэшированы типы (поле «Проект» в основных настройках). */
+let wiTypesCacheProject = "";
 let relationTypesCache = null;
 let projectTagsCache = null;
+let projectTagsCacheProject = "";
 
-async function getWiTypes() {
-  if (!wiTypesCache) {
-    const r = await sendBg({ type: CUSTOM_MSG.types });
-    wiTypesCache = r.ok ? r.results : [];
+function getMainSettingsProject() {
+  return projectInput.value.trim();
+}
+
+function invalidateWiTypesCache() {
+  wiTypesCache = null;
+  wiTypesCacheProject = "";
+}
+
+function invalidateProjectTagsCache() {
+  projectTagsCache = null;
+  projectTagsCacheProject = "";
+}
+
+/** Типы WI только из проекта основных настроек. */
+async function getWiTypes({ force = false } = {}) {
+  const project = getMainSettingsProject();
+  if (!force && wiTypesCache && wiTypesCacheProject === project) {
+    return wiTypesCache;
   }
+  const r = await sendBg({ type: CUSTOM_MSG.types, project });
+  wiTypesCache = (r.ok ? r.results : [])
+    .slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "ru", { sensitivity: "base" }));
+  wiTypesCacheProject = project;
   return wiTypesCache;
 }
 async function getRelationTypes() {
@@ -661,11 +690,35 @@ async function getRelationTypes() {
   return relationTypesCache;
 }
 async function getProjectTags() {
-  if (!projectTagsCache) {
-    const r = await sendBg({ type: CUSTOM_MSG.tags });
-    projectTagsCache = r.ok ? r.results : [];
+  const project = getMainSettingsProject();
+  if (projectTagsCache && projectTagsCacheProject === project) {
+    return projectTagsCache;
   }
+  const r = await sendBg({ type: CUSTOM_MSG.tags, project });
+  projectTagsCache = r.ok ? r.results : [];
+  projectTagsCacheProject = project;
   return projectTagsCache;
+}
+
+/**
+ * После смены проекта в основных настройках — обновить «Тип Wi» и
+ * убрать чипы «Показывать для типов», которых нет в новом проекте.
+ */
+async function refreshCustomButtonTypeFields() {
+  invalidateWiTypesCache();
+  const types = await getWiTypes({ force: true });
+  const typeNames = new Set(types.map((t) => t.name));
+
+  for (const card of document.querySelectorAll("#custom-buttons-list [data-card]")) {
+    const select = card.querySelector('[data-field="wiType"]');
+    if (select) {
+      const selected = select.value;
+      await fillWiTypeSelect(select, typeNames.has(selected) ? selected : "");
+    }
+    for (const chip of card.querySelectorAll("[data-types-chips] .custom-tags__chip")) {
+      if (!typeNames.has(chip.dataset.value)) chip.remove();
+    }
+  }
 }
 
 function readCardConfig(card) {
@@ -847,9 +900,10 @@ function wireTypesInput(card) {
   const render = async () => {
     const q = input.value.trim().toLowerCase();
     const chosen = chosenLower();
+    // Полный список типов проекта (как в «Тип Wi»), без лимита —
+    // уже выбранные чипы просто скрываем из выпадающего списка.
     const names = (await getWiTypes()).map((t) => t.name)
-      .filter((t) => !chosen.has(t.toLowerCase()) && (!q || t.toLowerCase().includes(q)))
-      .slice(0, 10);
+      .filter((t) => !chosen.has(t.toLowerCase()) && (!q || t.toLowerCase().includes(q)));
     list.innerHTML = "";
     for (const t of names) {
       const li = document.createElement("li");

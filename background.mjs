@@ -558,11 +558,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        // Типы/тэги WI — только из проекта основных настроек.
+        // Options может передать актуальный project из формы (ещё до/после Save).
+        const projectOverride = String(message.project ?? "").trim();
+        const scopedConfig = projectOverride
+          ? { ...config, project: projectOverride }
+          : config;
+
         let results;
         if (message.type === GET_WI_TYPES_MESSAGE_TYPE) {
-          results = await fetchProjectWorkItemTypes(config);
+          results = await fetchProjectWorkItemTypes(scopedConfig);
         } else if (message.type === GET_WI_TAGS_MESSAGE_TYPE) {
-          results = await fetchProjectTags(config);
+          results = await fetchProjectTags(scopedConfig);
         } else {
           results = await fetchWorkItemRelationTypes(config);
         }

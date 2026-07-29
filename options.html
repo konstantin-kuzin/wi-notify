@@ -212,17 +212,18 @@
           <label class="options__field">
             <span class="options__label">Тип Wi</span>
             <select class="options__input" data-field="wiType"></select>
+            <span class="options__hint">Типы из проекта в основных настройках.</span>
           </label>
 
           <div class="options__field">
-            <span class="options__label">Показывать для типов задач</span>
+            <span class="options__label">В WI каких типов будет доступна эта кнопка</span>
             <div class="custom-tags" data-types>
               <div class="custom-tags__chips" data-types-chips></div>
               <input class="options__input" type="text" data-types-input autocomplete="off"
                 placeholder="Выберите типы задач…" role="combobox" aria-expanded="false" aria-autocomplete="list">
               <ul class="options__combo-list" data-types-list role="listbox" hidden></ul>
             </div>
-            <span class="options__hint">Пусто — кнопка показывается на задачах всех типов.</span>
+            <span class="options__hint">Пусто — кнопка на задачах всех типов.</span>
           </div>
 
           <label class="options__field">
@@ -231,7 +232,7 @@
           </label>
           <label class="custom-card__checkbox">
             <input type="checkbox" data-field="titleFromParent">
-            <span>Взять название из исходной задачи</span>
+            <span>Скопировать название из исходной задачи</span>
           </label>
 
           <div class="options__field">
@@ -245,11 +246,11 @@
           </div>
 
           <div class="options__field">
-            <span class="options__label">Тэги</span>
+            <span class="options__label">Теги</span>
             <div class="custom-tags" data-tags>
               <div class="custom-tags__chips" data-tags-chips></div>
               <input class="options__input" type="text" data-tags-input autocomplete="off"
-                placeholder="Введите тэг и Enter…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+                placeholder="Введите тег и Enter…" role="combobox" aria-expanded="false" aria-autocomplete="list">
               <ul class="options__combo-list" data-tags-list role="listbox" hidden></ul>
             </div>
           </div>
@@ -293,7 +294,7 @@
           </div>
           <label class="custom-card__checkbox">
             <input type="checkbox" data-link-to-parent>
-            <span>Привязать к исходной задаче (той, где нажата кнопка)</span>
+            <span>Привязать к исходной задаче</span>
           </label>
         </div>
       </template>
