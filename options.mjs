@@ -817,6 +817,12 @@ function addTagChip(card, value) {
 function wireTagsInput(card) {
   const input = card.querySelector("[data-tags-input]");
   const list = card.querySelector("[data-tags-list]");
+  const box = card.querySelector("[data-tags]");
+  if (box && input) {
+    box.addEventListener("click", (e) => {
+      if (e.target === box || e.target.closest("[data-tags-chips]")) input.focus();
+    });
+  }
 
   // Фиксируем всё, что введено (в т.ч. несколько тэгов через запятую).
   const commit = () => {
@@ -891,6 +897,12 @@ function wireTypesInput(card) {
   const input = card.querySelector("[data-types-input]");
   const list = card.querySelector("[data-types-list]");
   if (!input || !list) return;
+  const box = card.querySelector("[data-types]");
+  if (box) {
+    box.addEventListener("click", (e) => {
+      if (e.target === box || e.target.closest("[data-types-chips]")) input.focus();
+    });
+  }
 
   const chosenLower = () => new Set(
     Array.from(card.querySelectorAll("[data-types-chips] .custom-tags__chip"))
@@ -1098,7 +1110,10 @@ async function buildCard(config = null) {
   for (const t of config?.showForTypes ?? []) addTypeChip(card, t);
   for (const l of config?.links ?? []) await addLinkCard(card, l);
 
-  card.querySelector("[data-add-link]").addEventListener("click", () => addLinkCard(card));
+  card.querySelector("[data-add-link]").addEventListener("click", (e) => {
+    e.preventDefault();
+    addLinkCard(card);
+  });
 
   card.querySelector("[data-save]").addEventListener("click", async () => {
     const status = card.querySelector("[data-status]");

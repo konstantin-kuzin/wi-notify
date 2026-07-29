@@ -189,7 +189,7 @@
 
       <section class="options__form" id="custom-buttons-section">
         <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Свои кнопки</legend>
+          <legend class="options__fieldset-legend">Кастомные кнопки для создания задач</legend>
           <p class="options__hint">
             Каждая кнопка появится в меню «…» формы задачи под «Design Review Task» и создаст свой Work Item.
           </p>
@@ -210,20 +210,20 @@
           </label>
 
           <label class="options__field">
-            <span class="options__label">Тип Wi</span>
+            <span class="options__label">Тип задачи</span>
             <select class="options__input" data-field="wiType"></select>
-            <span class="options__hint">Типы из проекта в основных настройках.</span>
+            <span class="options__hint">Тип задачи, которая будет создаваться при нажатии на кнопку.</span>
           </label>
 
           <div class="options__field">
-            <span class="options__label">В WI каких типов будет доступна эта кнопка</span>
+            <span class="options__label">Где показывать</span>
             <div class="custom-tags" data-types>
               <div class="custom-tags__chips" data-types-chips></div>
               <input class="options__input" type="text" data-types-input autocomplete="off"
                 placeholder="Выберите типы задач…" role="combobox" aria-expanded="false" aria-autocomplete="list">
               <ul class="options__combo-list" data-types-list role="listbox" hidden></ul>
             </div>
-            <span class="options__hint">Пусто — кнопка на задачах всех типов.</span>
+            <span class="options__hint">В WI каких типов будет доступна эта кнопка. Пусто — кнопка будет отображаться во всех задачах.</span>
           </div>
 
           <label class="options__field">
@@ -266,7 +266,7 @@
 
           <div class="options__field custom-links-field">
             <span class="options__label">Связать</span>
-            <button class="options__button options__button--secondary" type="button" data-add-link>+ Добавить ссылку</button>
+            <a class="options__text-link" href="#" data-add-link>+ Добавить ссылку</a>
             <div class="custom-links" data-links></div>
           </div>
 
@@ -285,7 +285,7 @@
             <select class="options__input" data-link-type></select>
           </label>
           <div class="options__field">
-            <span class="options__label">Wi</span>
+            <span class="options__label">Задача</span>
             <div class="options__combo" data-wi-combo>
               <input class="options__input" type="text" data-wi-input autocomplete="off"
                 placeholder="Поиск задачи по номеру или названию…" role="combobox" aria-expanded="false" aria-autocomplete="list">
