@@ -187,6 +187,106 @@
         </fieldset>
       </form>
 
+      <section class="options__form" id="custom-buttons-section">
+        <fieldset class="options__fieldset">
+          <legend class="options__fieldset-legend">Свои кнопки ревью</legend>
+          <p class="options__hint">
+            Каждая кнопка появится на форме задачи справа от «Design Review Task» и создаст свой Work Item.
+          </p>
+          <div id="custom-buttons-list" class="custom-buttons__list"></div>
+          <button class="options__button options__button--secondary" type="button" id="add-custom-button">
+            + Добавить своё ревью
+          </button>
+        </fieldset>
+      </section>
+
+      <template id="custom-button-card-template">
+        <fieldset class="custom-card" data-card>
+          <button class="custom-card__remove" type="button" data-remove title="Удалить кнопку" aria-label="Удалить кнопку">×</button>
+
+          <label class="options__field">
+            <span class="options__label">Название кнопки</span>
+            <input class="options__input" type="text" data-field="name" autocomplete="off" placeholder="Например: Создать баг">
+          </label>
+
+          <label class="options__field">
+            <span class="options__label">Тип Wi</span>
+            <select class="options__input" data-field="wiType"></select>
+          </label>
+
+          <label class="options__field">
+            <span class="options__label">Название задачи</span>
+            <input class="options__input" type="text" data-field="title" autocomplete="off">
+          </label>
+          <label class="custom-card__checkbox">
+            <input type="checkbox" data-field="titleFromParent">
+            <span>Взять название из задачи родителя</span>
+          </label>
+
+          <div class="options__field">
+            <span class="options__label">Назначить на</span>
+            <div class="options__combo" data-assignee-combo>
+              <span class="options__combo-avatar-slot" data-assignee-avatar></span>
+              <input class="options__input" type="text" data-assignee-input autocomplete="off"
+                placeholder="Начните вводить имя…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-assignee-list role="listbox" hidden></ul>
+            </div>
+          </div>
+
+          <div class="options__field">
+            <span class="options__label">Тэги</span>
+            <div class="custom-tags" data-tags>
+              <div class="custom-tags__chips" data-tags-chips></div>
+              <input class="options__input" type="text" data-tags-input autocomplete="off"
+                placeholder="Введите тэг и Enter…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-tags-list role="listbox" hidden></ul>
+            </div>
+          </div>
+
+          <label class="options__field">
+            <span class="options__label">Описание</span>
+            <textarea class="options__textarea" data-field="description" rows="4"></textarea>
+          </label>
+
+          <div class="options__field">
+            <span class="options__label">Связать</span>
+            <div class="custom-links" data-links></div>
+            <button class="options__button options__button--secondary" type="button" data-add-link>+ Добавить ссылку</button>
+          </div>
+
+          <div class="options__actions">
+            <button class="options__button" type="button" data-save>Сохранить изменения</button>
+            <span class="options__status" data-status role="status"></span>
+          </div>
+        </fieldset>
+      </template>
+
+      <template id="custom-link-card-template">
+        <div class="custom-link" data-link-card>
+          <button class="custom-link__remove" type="button" data-link-remove title="Удалить ссылку" aria-label="Удалить ссылку">×</button>
+          <div class="options__field">
+            <span class="options__label">Тип связи</span>
+            <div class="options__combo" data-link-type-combo>
+              <input class="options__input" type="text" data-link-type-input autocomplete="off"
+                placeholder="Начните вводить тип связи…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-link-type-list role="listbox" hidden></ul>
+            </div>
+          </div>
+          <div class="options__field">
+            <span class="options__label">Wi</span>
+            <div class="options__combo" data-wi-combo>
+              <input class="options__input" type="text" data-wi-input autocomplete="off"
+                placeholder="Поиск задачи по номеру или названию…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-wi-list role="listbox" hidden></ul>
+            </div>
+          </div>
+          <label class="custom-card__checkbox">
+            <input type="checkbox" data-link-to-parent>
+            <span>Привязать к родительской задаче (той, где нажата кнопка)</span>
+          </label>
+        </div>
+      </template>
+
       <form id="ai-options-form" class="options__form">
         <fieldset class="options__fieldset">
           <legend class="options__fieldset-legend">Настройки AI</legend>

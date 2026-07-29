@@ -54,6 +54,12 @@ export const DEFAULT_ADO_CONFIG = {
   reviewDesignLead: "",
   reviewDesignLeadName: "",
   reviewDesignLeadAvatar: "",
+  /**
+   * Пользовательские кнопки на форме work item. Каждая запись создаёт свой Work Item
+   * по заданным параметрам. Массив редактируется на странице настроек.
+   * @type {Array<{id:string,name:string,wiType:string,wiTypeIcon:{url:string,color:string},title:string,titleFromParent:boolean,assignedTo:string,assignedToName:string,assignedToAvatar:string,description:string,tags:string[],links:Array<{relType:string,targetId:number,targetTitle:string,toParent:boolean}>}>}
+   */
+  customReviewButtons: [],
 };
 
 export async function loadAdoConfig() {
@@ -62,6 +68,9 @@ export async function loadAdoConfig() {
   const partial = stored[ADO_CONFIG_KEY] ?? {};
   console.log('Partial config:', partial);
   const raw = { ...DEFAULT_ADO_CONFIG, ...partial };
+  raw.customReviewButtons = Array.isArray(partial.customReviewButtons)
+    ? partial.customReviewButtons
+    : [];
   raw.apiVersion = '6.0-preview';
   raw.refreshIntervalMinutes = resolveRefreshIntervalMinutes(raw);
 
@@ -148,6 +157,19 @@ export function parseReviewParentId(value) {
     return null;
   }
 
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {number|null} положительное целое или null
+ */
+export function parseWorkItemId(value) {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) {
+    return null;
+  }
   const parsed = Number.parseInt(raw, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

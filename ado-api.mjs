@@ -1,9 +1,11 @@
 import {
   normalizeApiRoot,
   parseReviewParentId,
+  parseWorkItemId,
   resolveApiVersion,
   resolveReviewProject,
 } from "./ado-config.mjs";
+import { buildCustomWorkItemFields } from "./custom-wi-fields.mjs";
 
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 900;
@@ -696,6 +698,8 @@ export async function fetchWorkItemsByIds(config, ids) {
             "System.ChangedDate",
             "System.Description",
             "System.TeamProject",
+            "System.AreaPath",
+            "System.IterationPath",
           ],
         }),
       },
@@ -1576,4 +1580,231 @@ export async function createWorkItemComment(config, workItemId, text) {
       ]),
     },
   );
+}
+export async function fetchProjectWorkItemTypes(config) {
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+  const data = await adoFetch(config, `${project}/_apis/wit/workitemtypes?${query.toString()}`);
+  const value = Array.isArray(data?.value) ? data.value : [];
+  return value.map((entry) => ({
+    name: normalizeText(entry?.name),
+    referenceName: normalizeText(entry?.referenceName),
+    iconUrl: normalizeText(entry?.icon?.url),
+    color: normalizeText(entry?.color),
+  })).filter((t) => t.name);
+}
+
+/**
+ * Существующие тэги проекта. Если эндпоинт недоступен — пустой список (ручной ввод остаётся).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<string[]>}
+ */
+export async function fetchProjectTags(config) {
+  const project = encodeURIComponent(config.project.trim());
+  const base = resolveApiVersion(config);
+  // Список тэгов — preview-ресурс, ему нужен минорный суффикс версии
+  // (например 6.0-preview.2). Пробуем сначала как есть, затем с суффиксом.
+  const versions = [];
+  versions.push(base);
+  if (/-preview$/i.test(base)) {
+    versions.push(`${base}.2`, `${base}.1`);
+  }
+
+  for (const version of versions) {
+    try {
+      const query = new URLSearchParams({ "api-version": version });
+      const data = await adoFetch(config, `${project}/_apis/wit/tags?${query.toString()}`);
+      const value = Array.isArray(data?.value) ? data.value : [];
+      const names = value.map((t) => normalizeText(t?.name)).filter(Boolean);
+      if (names.length || !/-preview$/i.test(base)) {
+        return names;
+      }
+    } catch (error) {
+      logAdoError(`fetchProjectTags(${version})`, error);
+    }
+  }
+  return [];
+}
+
+/**
+ * Типы связей work item (как в TFS).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<Array<{referenceName:string,name:string}>>}
+ */
+export async function fetchWorkItemRelationTypes(config) {
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+  const data = await adoFetch(config, `_apis/wit/workitemrelationtypes?${query.toString()}`);
+  const value = Array.isArray(data?.value) ? data.value : [];
+  return value
+    .map((entry) => ({
+      referenceName: normalizeText(entry?.referenceName),
+      name: normalizeText(entry?.name),
+    }))
+    .filter((t) => t.referenceName && t.name);
+}
+
+/**
+ * Поиск work item по проекту: точное совпадение по ID или Contains по заголовку.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} text
+ * @returns {Promise<Array<{id:number,title:string,type:string}>>}
+ */
+/**
+ * Поиск задач для связи. Возвращает { results, idsFound, mode } (debug — mode/idsFound
+ * для диагностики). Точный номер читаем напрямую по ID (надёжнее, чем WIQL Contains,
+ * который на части on-prem TFS не индексирован); иначе — текстовый WIQL по проекту.
+ */
+export async function searchWorkItems(config, text) {
+  const term = String(text ?? "").trim();
+  if (!term) {
+    return { results: [], idsFound: 0, mode: "empty" };
+  }
+
+  const toResult = (wi) => {
+    const f = wi?.fields ?? {};
+    return {
+      id: Number(wi?.id),
+      title: normalizeText(f["System.Title"]),
+      type: normalizeText(f["System.WorkItemType"]),
+      project: normalizeText(f["System.TeamProject"]),
+    };
+  };
+
+  const idDigits = term.replace(/^#/, "").trim();
+  const pureId = /^\d+$/.test(idDigits) ? Number(idDigits) : null;
+
+  // Точный номер — читаем задачу напрямую (тот же путь, что и чтение исходной задачи).
+  if (pureId !== null && pureId > 0) {
+    try {
+      const wi = await fetchWorkItemById(config, pureId);
+      const result = toResult(wi);
+      return { results: result.id > 0 ? [result] : [], idsFound: result.id > 0 ? 1 : 0, mode: "byId" };
+    } catch (error) {
+      logAdoError("searchWorkItems:byId", error);
+      return { results: [], idsFound: 0, mode: "byId-miss" };
+    }
+  }
+
+  // Текстовый поиск — WIQL Contains по проекту.
+  const project = config.project.trim();
+  const esc = term.replace(/'/g, "''");
+  const projectEsc = project.replace(/'/g, "''");
+  const wiql = [
+    "SELECT [System.Id]",
+    "FROM WorkItems",
+    `WHERE [System.TeamProject] = '${projectEsc}'`,
+    "  AND (",
+    `    [System.Title] Contains '${esc}'`,
+    `    OR [System.Description] Contains '${esc}'`,
+    "  )",
+    "ORDER BY [System.CreatedDate] DESC",
+  ].join("\n");
+
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+  const data = await adoFetch(
+    config,
+    `${encodeURIComponent(project)}/_apis/wit/wiql?${query.toString()}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ query: wiql }),
+    },
+  );
+
+  const ids = (Array.isArray(data?.workItems) ? data.workItems : [])
+    .map((w) => Number(w?.id))
+    .filter((id) => Number.isInteger(id) && id > 0)
+    .slice(0, 50);
+  if (!ids.length) {
+    return { results: [], idsFound: 0, mode: "text" };
+  }
+
+  const items = await fetchWorkItemsByIds(config, ids);
+  const order = new Map(ids.map((id, index) => [id, index]));
+  const results = items
+    .map(toResult)
+    .filter((wi) => Number.isInteger(wi.id) && wi.id > 0)
+    .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+
+  return { results, idsFound: ids.length, mode: "text" };
+}
+
+/**
+ * Создаёт Work Item по конфигу пользовательской кнопки.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {object} buttonConfig
+ * @param {{sourceId:number}} source
+ * @returns {Promise<{id:number,url:string,title:string,warnings:string[]}>}
+ */
+export async function createCustomWorkItem(config, buttonConfig, source) {
+  const sourceId = Number(source?.sourceId);
+  if (!Number.isInteger(sourceId) || sourceId <= 0) {
+    throw new Error("Исходная задача ещё не сохранена или не имеет номера.");
+  }
+
+  const type = String(buttonConfig?.wiType ?? "").trim();
+  if (!type) {
+    throw new Error("Не задан тип создаваемой задачи.");
+  }
+
+  const sourceWorkItem = await fetchWorkItemById(config, sourceId);
+  const fields = sourceWorkItem.fields ?? {};
+  const sourceTitle = normalizeText(fields["System.Title"]);
+  const sourceProject = normalizeText(fields["System.TeamProject"]) || config.project.trim();
+
+  const createFields = buildCustomWorkItemFields(buttonConfig, {
+    title: sourceTitle,
+    areaPath: normalizeText(fields["System.AreaPath"]),
+    iterationPath: normalizeText(fields["System.IterationPath"]),
+  });
+
+  if (!String(createFields["System.Title"] ?? "").trim()) {
+    throw new Error("Название задачи не задано (и не удалось взять из исходной задачи).");
+  }
+
+  const patch = Object.entries(createFields)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+
+  const project = encodeURIComponent(sourceProject);
+  const typeSeg = `$${encodeURIComponent(type)}`;
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+
+  const created = await adoFetch(
+    config,
+    `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json-patch+json" },
+      body: JSON.stringify(patch),
+    },
+  );
+
+  const newId = Number(created?.id);
+  if (!Number.isInteger(newId) || newId <= 0) {
+    throw new Error("Сервер не вернул номер созданной задачи.");
+  }
+
+  const newUrl = buildWorkItemWebUrl(config.apiRoot, sourceProject, newId, created);
+  const warnings = [];
+
+  const links = Array.isArray(buttonConfig?.links) ? buttonConfig.links : [];
+  for (const link of links) {
+    const relType = String(link?.relType ?? "").trim();
+    // «Привязать к родительской задаче» — целью связи становится исходная задача,
+    // из которой нажата кнопка. Иначе — выбранная в поиске задача.
+    const targetId = link?.toParent ? sourceId : parseWorkItemId(link?.targetId);
+    if (!relType || !targetId) {
+      continue;
+    }
+    try {
+      await addWorkItemRelation(config, newId, relType, buildWorkItemApiUrl(config, targetId), sourceProject);
+    } catch (error) {
+      logAdoError("createCustomWorkItem:link", error);
+      warnings.push(
+        `Связь ${relType} → #${targetId} не добавлена: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return { id: newId, url: newUrl, title: createFields["System.Title"], warnings };
 }

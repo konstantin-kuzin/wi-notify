@@ -21,6 +21,11 @@ import {
   resolveWorkItemTypeIcons,
   sortWorkItemsNewestFirst,
   updateWorkItemState,
+  fetchProjectWorkItemTypes,
+  fetchProjectTags,
+  fetchWorkItemRelationTypes,
+  searchWorkItems,
+  createCustomWorkItem,
 } from "./ado-api.mjs";
 import { addWorkItemEffortToCurrentWeek } from "./timesheet-api.mjs";
 import { chatCompletion } from "./ai-api.mjs";
@@ -36,6 +41,11 @@ const ADD_COMMENT_MESSAGE_TYPE = "add-comment";
 const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
 const CREATE_REVIEW_TASK_TIMEOUT_MS = 60000;
 const SEARCH_IDENTITIES_MESSAGE_TYPE = "search-identities";
+const GET_WI_TYPES_MESSAGE_TYPE = "get-wi-types";
+const GET_WI_TAGS_MESSAGE_TYPE = "get-wi-tags";
+const GET_WI_RELATION_TYPES_MESSAGE_TYPE = "get-wi-relation-types";
+const SEARCH_WORK_ITEMS_MESSAGE_TYPE = "search-work-items";
+const CREATE_CUSTOM_WI_MESSAGE_TYPE = "create-custom-wi";
 const AI_PING_MESSAGE_TYPE = "ai-ping";
 const REWRITE_DESCRIPTION_MESSAGE_TYPE = "rewriteDescription";
 const REWRITE_DESCRIPTION_TIMEOUT_MS = 95000;
@@ -529,6 +539,100 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+    })();
+    return true;
+  }
+
+  if (
+    message?.type === GET_WI_TYPES_MESSAGE_TYPE
+    || message?.type === GET_WI_TAGS_MESSAGE_TYPE
+    || message?.type === GET_WI_RELATION_TYPES_MESSAGE_TYPE
+  ) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+        if (validationErrors.length > 0) {
+          sendResponse({ ok: false, error: `${validationErrors.join(" ")} Откройте настройки расширения.` });
+          return;
+        }
+
+        let results;
+        if (message.type === GET_WI_TYPES_MESSAGE_TYPE) {
+          results = await fetchProjectWorkItemTypes(config);
+        } else if (message.type === GET_WI_TAGS_MESSAGE_TYPE) {
+          results = await fetchProjectTags(config);
+        } else {
+          results = await fetchWorkItemRelationTypes(config);
+        }
+        sendResponse({ ok: true, results });
+      } catch (error) {
+        logAdoError(message.type, error);
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === SEARCH_WORK_ITEMS_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+        if (validationErrors.length > 0) {
+          sendResponse({ ok: false, error: `${validationErrors.join(" ")} Откройте настройки расширения.` });
+          return;
+        }
+
+        const { results, idsFound, mode } = await searchWorkItems(config, message.query);
+        sendResponse({ ok: true, results, debug: { idsFound, mode } });
+      } catch (error) {
+        logAdoError(message.type, error);
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === CREATE_CUSTOM_WI_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const validationErrors = validateAdoConfig(config);
+        if (validationErrors.length > 0) {
+          sendResponse({ ok: false, error: `${validationErrors.join(" ")} Откройте настройки расширения.` });
+          return;
+        }
+
+        const buttons = Array.isArray(config.customReviewButtons) ? config.customReviewButtons : [];
+        const buttonConfig = buttons.find((b) => b?.id === message.buttonId);
+        if (!buttonConfig) {
+          sendResponse({ ok: false, error: "Настройка кнопки не найдена. Сохраните её заново в настройках." });
+          return;
+        }
+
+        const result = await createCustomWorkItem(config, buttonConfig, { sourceId: message.sourceId });
+
+        let tabOpened = false;
+        try {
+          await chrome.tabs.create({ url: result.url, active: true });
+          tabOpened = true;
+        } catch (tabError) {
+          logAdoError("createCustomWorkItem:openTab", tabError);
+        }
+
+        sendResponse({
+          ok: true,
+          id: result.id,
+          url: result.url,
+          title: result.title,
+          warnings: result.warnings ?? [],
+          tabOpened,
+        });
+      } catch (error) {
+        logAdoError("createCustomWorkItem", error);
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     })();
     return true;

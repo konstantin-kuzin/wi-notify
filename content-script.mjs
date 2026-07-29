@@ -726,6 +726,8 @@ const REVIEW_TOAST_CLASS = "wi-review-toast";
 const ADO_CONFIG_STORAGE_KEY = "adoConfig";
 const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
 const CREATE_REVIEW_TASK_TIMEOUT_MS = 65000;
+const CUSTOM_OVERFLOW_ITEM_CLASS = "wi-custom-review-overflow-item";
+const CREATE_CUSTOM_WI_MESSAGE_TYPE = "create-custom-wi";
 const REVIEW_TOOLBAR_SELECTORS = [
   // Классический TFS / Azure DevOps Server
   ".work-item-form-main-header .work-item-form-toolbar-container",
@@ -1446,6 +1448,197 @@ function addReviewOverflowMenuItem() {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Свои кнопки ревью в меню «...» (сразу под Design Review Task)
+// ---------------------------------------------------------------------------
+
+function requestCreateCustomWi(buttonId, sourceId, timeoutMs = CREATE_REVIEW_TASK_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timerId = window.setTimeout(() => {
+      reject(new Error(`Превышено время ожидания создания задачи (${timeoutMs} мс).`));
+    }, timeoutMs);
+    chrome.runtime.sendMessage(
+      { type: CREATE_CUSTOM_WI_MESSAGE_TYPE, buttonId, sourceId },
+      (response) => {
+        window.clearTimeout(timerId);
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      },
+    );
+  });
+}
+
+async function handleCustomButtonClick(control, buttonId) {
+  if (control.dataset.state === "pending") {
+    return;
+  }
+  const sourceId = getSourceWorkItemId();
+  if (sourceId === null) {
+    showReviewToast(
+      isTfsUiRussian()
+        ? "Задача ещё не сохранена или не имеет номера. Сохраните задачу и повторите."
+        : "The work item has no id yet. Save it and try again.",
+      "error",
+    );
+    return;
+  }
+
+  const label = control.querySelector(".wi-custom-review-label");
+  const originalText = label?.textContent ?? "";
+  control.dataset.state = "pending";
+  control.setAttribute("aria-disabled", "true");
+  if (label) {
+    label.textContent = getReviewPendingLabel();
+  }
+
+  try {
+    const response = await requestCreateCustomWi(buttonId, sourceId);
+    if (response?.ok) {
+      if (!response.tabOpened && response.url) {
+        window.open(response.url, "_blank", "noopener");
+      }
+      const warnings = Array.isArray(response.warnings) ? response.warnings : [];
+      if (warnings.length > 0) {
+        showReviewToast(`Задача #${response.id} создана, но не все связи добавлены: ${warnings.join(" ")}`, "warning");
+      } else {
+        showReviewToast(`Задача #${response.id} создана и открыта.`, "success");
+      }
+    } else {
+      showReviewToast(`Не удалось создать задачу: ${response?.error ?? "неизвестная ошибка"}`, "error");
+    }
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Create custom work item failed.`, error);
+    showReviewToast(`Ошибка при создании задачи: ${error.message}`, "error");
+  } finally {
+    control.dataset.state = "idle";
+    control.setAttribute("aria-disabled", "false");
+    if (label) {
+      label.textContent = originalText;
+    }
+  }
+}
+
+/** Иконка (по типу Wi) + подпись для пункта кастомной кнопки. */
+function createCustomIconAndLabel(cfg) {
+  const icon = document.createElement("span");
+  icon.className = "menu-item-icon wi-create-review-icon wi-custom-review-icon";
+  icon.setAttribute("aria-hidden", "true");
+  const iconUrl = cfg?.wiTypeIcon?.url;
+  if (iconUrl) {
+    const img = document.createElement("img");
+    img.src = iconUrl;
+    img.alt = "";
+    img.width = 16;
+    img.height = 16;
+    icon.appendChild(img);
+  } else {
+    icon.textContent = "";
+  }
+
+  const label = document.createElement("span");
+  label.className = "text wi-create-review-label wi-custom-review-label";
+  label.textContent = cfg?.name || "Custom";
+  return { icon, label };
+}
+
+/**
+ * Пункт кастомной кнопки в выпадающем меню «...».
+ * @param {object} cfg
+ * @returns {HTMLLIElement}
+ */
+function createCustomOverflowMenuItem(cfg) {
+  ensureReviewIconFont();
+
+  const item = document.createElement("li");
+  item.className = `menu-item wi-create-review-overflow-item ${CUSTOM_OVERFLOW_ITEM_CLASS}`;
+  item.dataset.state = "idle";
+  item.dataset.buttonId = cfg.id;
+  item.setAttribute("role", "menuitem");
+  item.tabIndex = -1;
+  item.title = cfg.name || "";
+  item.setAttribute("aria-disabled", "false");
+
+  const { icon, label } = createCustomIconAndLabel(cfg);
+  item.append(icon, label);
+  item.addEventListener("mouseenter", () => item.classList.add("hover"));
+  item.addEventListener("mouseleave", () => item.classList.remove("hover"));
+  item.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void handleCustomButtonClick(item, cfg.id);
+  });
+  return item;
+}
+
+/**
+ * Кастомные пункты стоят правильно: те же id и порядок, и идут сразу после
+ * пункта Design Review Task (или в начале меню, если пункта ревью нет).
+ */
+function customOverflowItemsCorrect(menu, buttons) {
+  const existing = Array.from(menu.querySelectorAll(`.${CUSTOM_OVERFLOW_ITEM_CLASS}`));
+  if (existing.length !== buttons.length) {
+    return false;
+  }
+  const ids = existing.map((n) => n.dataset.buttonId);
+  if (!buttons.every((b, i) => ids[i] === b.id)) {
+    return false;
+  }
+  const reviewItem = menu.querySelector(`.${REVIEW_OVERFLOW_ITEM_CLASS}`);
+  for (let i = 0; i < existing.length; i += 1) {
+    const expectedPrev = i === 0 ? reviewItem : existing[i - 1];
+    if (expectedPrev) {
+      if (expectedPrev.nextElementSibling !== existing[i]) {
+        return false;
+      }
+    } else if (existing[i] !== menu.firstElementChild) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Вставляет кастомные пункты в меню «...» сразу под Design Review Task.
+ * @returns {boolean}
+ */
+function addCustomOverflowMenuItems() {
+  const buttons = Array.isArray(reviewConfigCache?.customReviewButtons)
+    ? reviewConfigCache.customReviewButtons
+    : [];
+
+  const menu = findWorkItemOverflowMenuList();
+  if (!menu) {
+    return false;
+  }
+
+  if (!buttons.length || getSourceWorkItemId() === null) {
+    menu.querySelectorAll(`.${CUSTOM_OVERFLOW_ITEM_CLASS}`).forEach((n) => n.remove());
+    return false;
+  }
+
+  if (customOverflowItemsCorrect(menu, buttons)) {
+    return true;
+  }
+
+  menu.querySelectorAll(`.${CUSTOM_OVERFLOW_ITEM_CLASS}`).forEach((n) => n.remove());
+
+  const reviewItem = menu.querySelector(`.${REVIEW_OVERFLOW_ITEM_CLASS}`);
+  let anchor = reviewItem || null;
+  for (const cfg of buttons) {
+    const item = createCustomOverflowMenuItem(cfg);
+    if (anchor) {
+      anchor.after(item);
+    } else {
+      menu.insertBefore(item, menu.firstChild);
+    }
+    anchor = item;
+  }
+  return true;
+}
+
 function findClassicMenuBar() {
   const form = getWorkItemFormRoot();
   if (!form) {
@@ -1993,6 +2186,7 @@ function mountReviewOverflowNow() {
   try {
     removeToolbarReviewButtonLeftovers();
     addReviewOverflowMenuItem();
+    addCustomOverflowMenuItems();
   } finally {
     queueMicrotask(() => {
       isMutatingUi = false;
@@ -2065,6 +2259,7 @@ function scheduleUiMount() {
       }
       removeToolbarReviewButtonLeftovers();
       addReviewOverflowMenuItem();
+      addCustomOverflowMenuItems();
     } finally {
       queueMicrotask(() => {
         isMutatingUi = false;
