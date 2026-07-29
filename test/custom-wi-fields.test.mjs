@@ -21,6 +21,36 @@ test("resolveCustomTitle: из родителя, если чекбокс вкл�
   );
 });
 
+test("resolveCustomTitle: префикс добавляется перед названием из родителя", () => {
+  assert.equal(
+    resolveCustomTitle(
+      { title: "Моя задача", titleFromParent: true, titlePrefix: "[UX]" },
+      "Исходная",
+    ),
+    "[UX]Исходная",
+  );
+});
+
+test("resolveCustomTitle: пустой префикс не меняет название из родителя", () => {
+  assert.equal(
+    resolveCustomTitle(
+      { title: "Моя задача", titleFromParent: true, titlePrefix: "  " },
+      "Исходная",
+    ),
+    "Исходная",
+  );
+});
+
+test("resolveCustomTitle: префикс игнорируется, если чекбокс выключен", () => {
+  assert.equal(
+    resolveCustomTitle(
+      { title: "Моя задача", titleFromParent: false, titlePrefix: "[UX]" },
+      "Исходная",
+    ),
+    "Моя задача",
+  );
+});
+
 test("tagsToFieldValue: объединяет через '; ' и чистит пустые", () => {
   assert.equal(tagsToFieldValue(["a", " ", "b"]), "a; b");
   assert.equal(tagsToFieldValue([]), "");

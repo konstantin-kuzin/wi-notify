@@ -84,7 +84,6 @@
 
           <p class="options__hint options__hint--fieldset" id="review-enabled-hint">
             Создаёт связанную задачу типа Review из формы work item и показывает пункт в меню «...» формы WI.
-            Выключите тоггл, чтобы скрыть пункт и свернуть настройки.
           </p>
 
           <div id="review-options-body">
@@ -226,15 +225,21 @@
             <span class="options__hint">В WI каких типов будет доступна эта кнопка. Пусто — кнопка будет отображаться во всех задачах.</span>
           </div>
 
-          <label class="options__field">
+          <div class="options__field">
             <span class="options__label">Название задачи</span>
-            <input class="options__input" type="text" data-field="title" autocomplete="off">
-          </label>
-          <label class="custom-card__checkbox">
-            <input type="checkbox" data-field="titleFromParent">
-            <span>Скопировать название из исходной задачи</span>
-          </label>
-
+            <div class="custom-title-controls">
+              <input class="options__input custom-title-prefix" type="text" data-field="titlePrefix"
+                placeholder="Prefix" autocomplete="off" hidden>
+              <input class="options__input" type="text" data-field="title" autocomplete="off">
+            </div>
+          </div>
+          <div class="custom-card__checkbox-block">
+            <label class="custom-card__checkbox">
+              <input type="checkbox" data-field="titleFromParent">
+              <span>Использовать название исходной задачи</span>
+            </label>
+            <span class="options__hint custom-card__checkbox-hint">Префикс добавится перед названием исходной задачи.</span>
+          </div>
           <div class="options__field">
             <span class="options__label">Назначить на</span>
             <div class="options__combo" data-assignee-combo>
@@ -261,7 +266,7 @@
           </label>
           <label class="custom-card__checkbox">
             <input type="checkbox" data-field="descriptionFromParent">
-            <span>Скопировать описание из исходной задачи</span>
+            <span>Использовать описание из исходной задачи</span>
           </label>
 
           <div class="options__field custom-links-field">

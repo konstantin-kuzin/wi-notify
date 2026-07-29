@@ -57,7 +57,7 @@ export const DEFAULT_ADO_CONFIG = {
   /**
    * Пользовательские кнопки на форме work item. Каждая запись создаёт свой Work Item
    * по заданным параметрам. Массив редактируется на странице настроек.
-   * @type {Array<{id:string,name:string,wiType:string,wiTypeIcon:{url:string,color:string},title:string,titleFromParent:boolean,assignedTo:string,assignedToName:string,assignedToAvatar:string,description:string,tags:string[],links:Array<{relType:string,targetId:number,targetTitle:string,toParent:boolean}>}>}
+   * @type {Array<{id:string,name:string,wiType:string,wiTypeIcon:{url:string,color:string},title:string,titlePrefix:string,titleFromParent:boolean,assignedTo:string,assignedToName:string,assignedToAvatar:string,description:string,tags:string[],links:Array<{relType:string,targetId:number,targetTitle:string,toParent:boolean}>}>}
    */
   customReviewButtons: [],
 };

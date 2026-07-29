@@ -9,10 +9,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-/** @param {{title?:string,titleFromParent?:boolean}} buttonConfig */
+/** @param {{title?:string,titleFromParent?:boolean,titlePrefix?:string}} buttonConfig */
 export function resolveCustomTitle(buttonConfig, sourceTitle) {
   if (buttonConfig?.titleFromParent) {
-    return String(sourceTitle ?? "").trim();
+    const source = String(sourceTitle ?? "").trim();
+    const prefix = String(buttonConfig?.titlePrefix ?? "").trim();
+    if (prefix) {
+      return `${prefix}${source}`;
+    }
+    return source;
   }
   return String(buttonConfig?.title ?? "").trim();
 }

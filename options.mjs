@@ -751,6 +751,7 @@ function readCardConfig(card) {
     wiType: selectedType,
     wiTypeIcon: { url: iconUrl, color: iconColor },
     title: val('[data-field="title"]').value.trim(),
+    titlePrefix: val('[data-field="titlePrefix"]').value.trim(),
     titleFromParent: val('[data-field="titleFromParent"]').checked,
     assignedTo: card.dataset.assignedTo || "",
     assignedToName: card.dataset.assignedToName || "",
@@ -1087,12 +1088,18 @@ async function buildCard(config = null) {
   await fillWiTypeSelect(card.querySelector('[data-field="wiType"]'), config?.wiType ?? "");
   card.querySelector('[data-field="name"]').value = config?.name ?? "";
   card.querySelector('[data-field="title"]').value = config?.title ?? "";
+  card.querySelector('[data-field="titlePrefix"]').value = config?.titlePrefix ?? "";
   card.querySelector('[data-field="description"]').value = config?.description ?? "";
 
   const titleInput = card.querySelector('[data-field="title"]');
+  const titlePrefixInput = card.querySelector('[data-field="titlePrefix"]');
   const fromParent = card.querySelector('[data-field="titleFromParent"]');
   fromParent.checked = Boolean(config?.titleFromParent);
-  const syncTitleDisabled = () => { titleInput.disabled = fromParent.checked; };
+  const syncTitleDisabled = () => {
+    titleInput.disabled = fromParent.checked;
+    titlePrefixInput.hidden = !fromParent.checked;
+    if (!fromParent.checked) titlePrefixInput.value = "";
+  };
   fromParent.addEventListener("change", syncTitleDisabled);
   syncTitleDisabled();
 
