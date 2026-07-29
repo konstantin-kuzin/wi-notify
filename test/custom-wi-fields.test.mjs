@@ -57,3 +57,19 @@ test("buildCustomWorkItemFields: пропускает пустые опцион�
   assert.ok(!("System.Description" in fields));
   assert.ok(!("System.AreaPath" in fields));
 });
+
+test("buildCustomWorkItemFields: descriptionFromParent копирует описание исходной задачи как есть", () => {
+  const fields = buildCustomWorkItemFields(
+    { title: "T", titleFromParent: false, descriptionFromParent: true, description: "игнор" },
+    { title: "Src", description: "<div>Исходное <b>HTML</b></div>" },
+  );
+  assert.equal(fields["System.Description"], "<div>Исходное <b>HTML</b></div>");
+});
+
+test("buildCustomWorkItemFields: descriptionFromParent без описания у источника — поле не ставится", () => {
+  const fields = buildCustomWorkItemFields(
+    { title: "T", titleFromParent: false, descriptionFromParent: true, description: "игнор" },
+    { title: "Src", description: "" },
+  );
+  assert.ok(!("System.Description" in fields));
+});

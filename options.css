@@ -487,6 +487,12 @@ body {
 
 .custom-tags {
   position: relative;
+  width: 100%;
+}
+
+.custom-tags .options__input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .custom-tags__chips {
@@ -532,3 +538,14 @@ body {
   gap: 8px;
 }
 
+
+/* «Связать»: кнопка добавления сразу под заголовком, больше отступ до «Сохранить». */
+.custom-links-field {
+  margin-bottom: 24px;
+}
+.custom-links-field [data-add-link] {
+  margin: 4px 0 10px;
+}
+.custom-links-field .custom-links {
+  margin-bottom: 0;
+}
