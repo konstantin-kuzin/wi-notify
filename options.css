@@ -6,6 +6,10 @@
   --accent: #0b5cab;
   --label-width: 168px;
   --field-gap: 12px;
+  --tab-bg: #f5f5f5;
+  --tab-hover-bg: #d7d7d7;
+  --tab-active-bg: #484848;
+  --tab-active-text: #fff;
 }
 
 * {
@@ -25,6 +29,64 @@ body {
   font-size: 22px;
 }
 
+.options__tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.options__tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  border-radius: 99px;
+  background: var(--tab-bg);
+  color: var(--text);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  white-space: nowrap;
+}
+
+.options__tab:hover {
+  background: var(--tab-hover-bg);
+}
+
+.options__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.options__tab[aria-selected="true"] {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-text);
+}
+
+.options__panels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.options__panel {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .options__lead {
   margin: 0 0 16px;
   color: var(--muted);
@@ -36,8 +98,8 @@ body {
   gap: 12px;
 }
 
-/* Отступы между блоками настроек */
-.options__form + .options__form {
+/* Отступы между блоками настроек. ~ а не +, потому что между секциями лежат template. */
+.options > .options__form ~ .options__form {
   margin-top: 18px;
 }
 
@@ -57,9 +119,10 @@ body {
   width: var(--label-width);
   margin-right: var(--field-gap);
   padding-top: 8px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.3;
-  text-align: right;
+  text-align: left;
+  color: var(--muted);
 }
 
 .options__field > :not(.options__label) {
@@ -499,6 +562,7 @@ select.options__input {
 }
 
 /* Hide unused blocks */
+.options__field--locked,
 .options__field:has(#repository-id) {
   display: none;
 }
@@ -506,12 +570,6 @@ select.options__input {
 #groups-block {
   display: none;
 }
-
-/* AI временно скрыт — код и разметка сохранены, доработаем позже. */
-#ai-options-form {
-  display: none;
-}
-
 
 .custom-buttons__list {
   display: flex;

@@ -65,9 +65,26 @@ const DEFAULT_STATE = {
   currentUserDisplayName: "",
 };
 
-function buildRewriteDescriptionPrompt({ title, description }) {
+function buildRewritePrompt({ title, text, kind }) {
   const normalizedTitle = String(title ?? "").trim();
-  const normalizedDescription = String(description ?? "").trim();
+  const normalizedText = String(text ?? "").trim();
+  const isComment = kind === "discussion" || kind === "comment";
+
+  if (isComment) {
+    return [
+      "Перепиши комментарий к work item в Azure DevOps.",
+      "Учитывай заголовок задачи и текущий текст комментария.",
+      "Сохрани факты, технические детали, ограничения, ссылки, упоминания людей (@...), статусы и шаги.",
+      "Сделай текст более структурированным и читаемым.",
+      "Не используй таблицы в любом виде; если нужно сравнение или группировка, используй списки.",
+      "Верни только готовый текст комментария без пояснений от себя.",
+      "",
+      `Title: ${normalizedTitle || "Untitled"}`,
+      "",
+      "Current comment:",
+      normalizedText,
+    ].join("\n");
+  }
 
   return [
     "Перепиши описание work item для поля Description в Azure DevOps.",
@@ -80,7 +97,7 @@ function buildRewriteDescriptionPrompt({ title, description }) {
     `Title: ${normalizedTitle || "Untitled"}`,
     "",
     "Current Description:",
-    normalizedDescription,
+    normalizedText,
   ].join("\n");
 }
 
@@ -506,8 +523,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const originalText = typeof message.text === "string" ? message.text : "";
         const workItemTitle = typeof message.title === "string" ? message.title : "";
+        const rewriteKind = typeof message.kind === "string" ? message.kind : "description";
         console.log("[WI Notify AI] rewriteDescription message received.", {
           build: AI_BUILD_MARK,
+          kind: rewriteKind,
           titleLength: workItemTitle.length,
           textLength: originalText.length,
           senderUrl: sender?.url ?? null,
@@ -519,9 +538,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const rewritePrompt = buildRewriteDescriptionPrompt({
+        const rewritePrompt = buildRewritePrompt({
           title: workItemTitle,
-          description: originalText,
+          text: originalText,
+          kind: rewriteKind,
         });
 
         console.log("[WI Notify AI] Calling chatCompletion.", {

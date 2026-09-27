@@ -8,6 +8,8 @@ import {
 import {
   AI_CONFIG_KEY,
   DEFAULT_AI_CONFIG,
+  HIDE_AI_CONNECTION_FIELDS,
+  applyHiddenAiFields,
   loadAiConfig,
   validateAiConfig,
 } from "./ai-config.mjs";
@@ -126,6 +128,7 @@ async function init() {
   aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
   aiModelInput.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
   aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
+  applyHiddenAiConnectionUi();
 
   saveAiButton.addEventListener("click", () => {
     void handleAiSubmit();
@@ -151,16 +154,27 @@ async function buildConfigForApi() {
   };
 }
 
+function applyHiddenAiConnectionUi() {
+  if (!HIDE_AI_CONNECTION_FIELDS) {
+    return;
+  }
+
+  for (const input of [aiBaseUrlInput, aiModelInput]) {
+    input.required = false;
+    input.closest(".options__field")?.classList.add("options__field--locked");
+  }
+}
+
 async function buildAiConfigForSave() {
   const stored = await loadAiConfig();
 
-  return {
+  return applyHiddenAiFields({
     ...stored,
     baseUrl: aiBaseUrlInput.value.trim(),
     apiKey: aiApiKeyInput.value.trim(),
     model: aiModelInput.value.trim(),
     servicePrompt: aiServicePromptTextarea.value.trim(),
-  };
+  });
 }
 
 async function handleSubmit() {
@@ -487,7 +501,7 @@ async function handleAiSubmit() {
     console.log('AI Config saved successfully:', merged);
   } catch (error) {
     console.error('Failed to save AI config:', error);
-    setOptionsStatus(saveAiStatus, "Ошибка сохранения AI настроек: " + error.message, "err");
+    setOptionsStatus(saveAiStatus, "Ошибка сохранения настроек: " + error.message, "err");
     return;
   }
 
@@ -504,7 +518,7 @@ async function handleAiSubmit() {
     return;
   }
 
-  setOptionsStatus(saveAiStatus, "AI настройки сохранены, доступ к AI API выдан.", "ok");
+  setOptionsStatus(saveAiStatus, "Настройки сохранены", "ok");
 }
 
 async function requestDevAzureHostPermissionIfNeeded(apiRoot) {
@@ -1181,3 +1195,49 @@ async function initCustomButtons() {
 }
 
 void initCustomButtons();
+
+// --- Переключение вкладок -----------------------------
+
+const tabs = document.querySelectorAll(".options__tab");
+const panels = document.querySelectorAll(".options__panel");
+
+function showPanelByTab(tabName) {
+  tabs.forEach((t) => {
+    t.setAttribute("aria-selected", "false");
+    t.setAttribute("tabindex", "-1");
+  });
+
+  const activeTab = document.querySelector(`.options__tab[data-tab="${tabName}"]`);
+  if (activeTab) {
+    activeTab.setAttribute("aria-selected", "true");
+    activeTab.setAttribute("tabindex", "0");
+  }
+
+  panels.forEach((panel) => {
+    panel.hidden = true;
+  });
+
+  const activePanel = document.getElementById(`panel-${tabName}`);
+  if (activePanel) {
+    activePanel.hidden = false;
+  }
+}
+
+// Инициализация при загрузке — показать первую вкладку
+showPanelByTab("basic");
+
+tabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const tabName = tab.dataset.tab;
+    showPanelByTab(tabName);
+  });
+
+  // Поддержка клавиатуры: Tab для навигации между вкладками
+  tab.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      tab.click();
+    }
+  });
+});
+

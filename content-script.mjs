@@ -1,13 +1,12 @@
 const LOG_PREFIX = "[WI Notify AI]";
-const BUILD_MARK = "2026-05-19-01";
+const BUILD_MARK = "2026-09-21-01";
 
 console.log(`${LOG_PREFIX} Content script loaded.`, { build: BUILD_MARK });
 
 const AI_BUTTON_CLASS = "ai-rewrite-button";
 const AI_BUTTON_CONTAINER_CLASS = "ai-rewrite-button-container";
 const AI_BUTTON_STYLE_ID = "wi-notify-ai-button-styles";
-/** AI-кнопка в Description временно скрыта — код сохранён, доработаем позже. */
-const AI_FEATURES_ENABLED = false;
+const AI_FEATURES_ENABLED = true;
 const COMMAND_BAR_SELECTORS = [
   ".ms-CommandBar-primaryCommands",
   ".bolt-header-commandbar .ms-CommandBar",
@@ -15,10 +14,32 @@ const COMMAND_BAR_SELECTORS = [
   "[data-renderedregion='toolbar'] .ms-CommandBar",
   "[role='toolbar']",
 ];
-const DESCRIPTION_EDITOR_SELECTORS = [
-  "[aria-label='Description'][role='textbox'][contenteditable='true']",
-  "textarea[aria-label='Description']",
-  "iframe[title='Description']",
+const TOOLBAR_LOCAL_ROOT_SELECTORS = [
+  ".html-editor",
+  ".rooster-wrapper",
+  ".discussion-messages-right",
+  ".discussion-message-entry",
+  ".wit-comment-item",
+];
+const RICH_TEXT_EDITOR_TARGETS = [
+  {
+    kind: "description",
+    fieldName: "Description",
+    selectors: [
+      "[aria-label='Description'][role='textbox'][contenteditable='true']",
+      "textarea[aria-label='Description']",
+      "iframe[title='Description']",
+    ],
+  },
+  {
+    kind: "discussion",
+    fieldName: "Discussion",
+    selectors: [
+      "[aria-label='Discussion'][role='textbox'][contenteditable='true']",
+      "textarea[aria-label='Discussion']",
+      "iframe[title='Discussion']",
+    ],
+  },
 ];
 const TITLE_SELECTORS = [
   "[aria-label='Title']",
@@ -38,97 +59,100 @@ function isVisible(element) {
   return style.display !== "none" && style.visibility !== "hidden";
 }
 
-function findDescriptionEditor() {
-  if (!AI_FEATURES_ENABLED) {
-    return null;
+function resolveEditorCandidate(candidate) {
+  if (candidate instanceof HTMLIFrameElement) {
+    return candidate.contentDocument?.body || null;
   }
 
-  for (const selector of DESCRIPTION_EDITOR_SELECTORS) {
-    const candidate = document.querySelector(selector);
-    if (!candidate) {
-      continue;
-    }
-
-    if (candidate instanceof HTMLIFrameElement) {
-      if (candidate.contentDocument?.body) {
-        console.log(`${LOG_PREFIX} Description editor found via iframe selector`, { selector });
-        return candidate.contentDocument.body;
-      }
-      continue;
-    }
-
-    if (isVisible(candidate)) {
-      console.log(`${LOG_PREFIX} Description editor found via direct selector`, {
-        selector,
-        tagName: candidate.tagName,
-        className: candidate.className,
-      });
-      return candidate;
-    }
+  if (candidate instanceof HTMLElement && isVisible(candidate)) {
+    return candidate;
   }
 
-  for (const sectionButton of document.querySelectorAll("button[aria-label], button")) {
-    if (!/Description/i.test(sectionButton.getAttribute("aria-label") || sectionButton.textContent || "")) {
-      continue;
-    }
-
-    const sectionRoot = sectionButton.closest("section, [role='region'], div");
-    if (!sectionRoot) {
-      continue;
-    }
-
-    const nestedEditor = sectionRoot.querySelector(
-      "[aria-label='Description'][role='textbox'][contenteditable='true'], textarea[aria-label='Description'], div[contenteditable='true'][role='textbox']"
-    );
-    if (nestedEditor && isVisible(nestedEditor)) {
-      console.log(`${LOG_PREFIX} Description editor found via section fallback`, {
-        tagName: nestedEditor.tagName,
-        className: nestedEditor.className,
-      });
-      return nestedEditor;
-    }
-  }
-
-  // Отсутствие редактора — нормально (поле ещё не смонтировано / другой layout WI).
   return null;
 }
 
-function findDescriptionSectionRoot() {
-  const editor = findDescriptionEditor();
-  if (!editor) {
-    return null;
+function findRichTextEditors() {
+  if (!AI_FEATURES_ENABLED) {
+    return [];
   }
 
-  return editor.closest("section, [role='region'], .flex-column, .work-item-form-control, .work-item-control")
-    || editor.parentElement;
+  const editors = [];
+  const seen = new Set();
+
+  for (const target of RICH_TEXT_EDITOR_TARGETS) {
+    for (const selector of target.selectors) {
+      for (const candidate of document.querySelectorAll(selector)) {
+        const editor = resolveEditorCandidate(candidate);
+        if (!editor || seen.has(editor)) {
+          continue;
+        }
+
+        seen.add(editor);
+        editors.push({
+          editor,
+          host: candidate instanceof HTMLIFrameElement ? candidate : editor,
+          kind: target.kind,
+          fieldName: target.fieldName,
+        });
+      }
+    }
+  }
+
+  return editors;
 }
 
-function findDescriptionToolbarHost() {
-  if (!AI_FEATURES_ENABLED) {
+function findToolbarHostForEditor(host) {
+  if (!AI_FEATURES_ENABLED || !(host instanceof HTMLElement)) {
     return null;
   }
 
-  const sectionRoot = findDescriptionSectionRoot();
-  if (!sectionRoot) {
-    return null;
+  const searchRoots = [];
+  for (const selector of TOOLBAR_LOCAL_ROOT_SELECTORS) {
+    const root = host.closest(selector);
+    if (root instanceof HTMLElement) {
+      searchRoots.push(root);
+    }
   }
 
-  for (const selector of COMMAND_BAR_SELECTORS) {
-    for (const candidate of sectionRoot.querySelectorAll(selector)) {
-      if (!(candidate instanceof HTMLElement) || !isVisible(candidate)) {
-        continue;
+  const sectionRoot = host.closest(
+    "section, [role='region'], .flex-column, .work-item-form-control, .work-item-control"
+  ) || host.parentElement;
+  if (sectionRoot instanceof HTMLElement) {
+    searchRoots.push(sectionRoot);
+  }
+
+  for (const root of searchRoots) {
+    for (const selector of COMMAND_BAR_SELECTORS) {
+      for (const candidate of root.querySelectorAll(selector)) {
+        if (!(candidate instanceof HTMLElement) || !isVisible(candidate)) {
+          continue;
+        }
+
+        // Реакции у уже опубликованных комментариев — не тот тулбар.
+        if (candidate.closest(".comment-toolbar")) {
+          continue;
+        }
+
+        return candidate;
       }
-
-      console.log(`${LOG_PREFIX} Description toolbar host found.`, {
-        selector,
-        tagName: candidate.tagName,
-        className: candidate.className,
-      });
-      return candidate;
     }
   }
 
   return null;
+}
+
+function resolveEditorFromButton(button, fallbackEditor) {
+  const root = button.closest(
+    ".html-editor, .discussion-messages-right, .discussion-message-entry, .wit-comment-item, .work-item-control"
+  );
+  if (!(root instanceof HTMLElement)) {
+    return fallbackEditor;
+  }
+
+  const candidate = root.querySelector(
+    "[role='textbox'][contenteditable='true'], textarea[aria-label='Description'], textarea[aria-label='Discussion']"
+  );
+  return resolveEditorCandidate(candidate) || fallbackEditor;
 }
 
 function findWorkItemTitle() {
@@ -180,6 +204,90 @@ function getEditorText(editor) {
   return editor.innerText || editor.textContent || "";
 }
 
+const HTML_MARKUP_PATTERN = /<\/?(?:p|div|br|span|strong|b|em|i|u|s|ul|ol|li|h[1-6]|a|table|thead|tbody|tr|td|th|blockquote|pre|code|hr|img|html|body)\b[^>]*>/i;
+
+function unwrapHtmlCodeFence(value) {
+  const match = value.match(/^```(?:html|xml)?\s*\n([\s\S]*?)\n```$/i);
+  return match ? match[1] : value;
+}
+
+function htmlToPlainText(value) {
+  const source = unwrapHtmlCodeFence(String(value ?? "").replace(/\r\n/g, "\n").trim());
+  if (!HTML_MARKUP_PATTERN.test(source)) {
+    return source;
+  }
+
+  const doc = new DOMParser().parseFromString(source, "text/html");
+  const parts = [];
+
+  const appendBreak = () => {
+    if (parts.length === 0 || parts[parts.length - 1].endsWith("\n")) {
+      return;
+    }
+    parts.push("\n");
+  };
+
+  const walk = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const raw = node.textContent ?? "";
+      if (!raw.trim()) {
+        if (!raw.includes("\n") && raw.includes(" ")) {
+          parts.push(" ");
+        }
+        return;
+      }
+
+      const text = raw.replace(/[ \t\f\v]+/g, " ").replace(/\n+/g, " ");
+      if (text) {
+        parts.push(text);
+      }
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+
+    const tag = node.tagName.toLowerCase();
+    if (tag === "script" || tag === "style") {
+      return;
+    }
+    if (tag === "br" || tag === "hr") {
+      parts.push("\n");
+      return;
+    }
+
+    const isBlock = /^(?:p|div|h[1-6]|li|tr|blockquote|pre|ul|ol|table|section|article)$/.test(tag);
+    if (isBlock) {
+      appendBreak();
+    }
+    if (tag === "li") {
+      parts.push("- ");
+    } else if (tag === "td" || tag === "th") {
+      if (parts.length > 0 && !/[\n ]$/.test(parts[parts.length - 1])) {
+        parts.push(" ");
+      }
+    }
+
+    for (const child of node.childNodes) {
+      walk(child);
+    }
+
+    if (isBlock) {
+      appendBreak();
+    }
+  };
+
+  walk(doc.body);
+
+  return parts.join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -189,183 +297,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll("`", "&#96;");
-}
-
-function renderInlineMarkdown(text) {
-  let html = escapeHtml(text);
-
-  html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_match, alt, url) => {
-    return `<img src="${escapeAttribute(url)}" alt="${escapeAttribute(alt)}">`;
-  });
-
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
-    return `<a href="${escapeAttribute(url)}">${escapeHtml(label)}</a>`;
-  });
-
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-  return html;
-}
-
-function splitMarkdownTableRow(line) {
-  const trimmed = String(line ?? "").trim();
-  if (!trimmed.includes("|")) {
-    return null;
+function plainTextToEditorHtml(text) {
+  const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+  if (lines.length === 0) {
+    return "<div><br></div>";
   }
 
-  const normalized = trimmed.replace(/^\|/, "").replace(/\|$/, "");
-  const cells = normalized.split("|").map((cell) => cell.trim());
-  return cells.length > 0 ? cells : null;
-}
-
-function isMarkdownTableSeparator(line) {
-  const cells = splitMarkdownTableRow(line);
-  if (!cells || cells.length === 0) {
-    return false;
-  }
-
-  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function renderMarkdownTable(headers, rows) {
-  const headerCells = headers.map((cell, index) => cell || `Column ${index + 1}`);
-  const chunks = [];
-
-  for (const row of rows) {
-    const pairs = row
-      .map((cell, index) => {
-        const label = headerCells[index];
-        const value = cell || "—";
-        return `<strong>${renderInlineMarkdown(label)}:</strong> ${renderInlineMarkdown(value)}`;
-      })
-      .join("<br>");
-
-    chunks.push(`<p>${pairs}</p>`);
-  }
-
-  return chunks.join("");
-}
-
-function renderMarkdownToHtml(markdown) {
-  const normalized = String(markdown ?? "").replace(/\r\n/g, "\n").trim();
-  if (!normalized) {
-    return "<p><br></p>";
-  }
-
-  const lines = normalized.split("\n");
-  const chunks = [];
-  let paragraphLines = [];
-  let listType = null;
-  let listItems = [];
-
-  const flushParagraph = () => {
-    if (paragraphLines.length === 0) {
-      return;
-    }
-
-    chunks.push(`<p>${paragraphLines.map(renderInlineMarkdown).join("<br>")}</p>`);
-    paragraphLines = [];
-  };
-
-  const flushList = () => {
-    if (!listType || listItems.length === 0) {
-      listType = null;
-      listItems = [];
-      return;
-    }
-
-    const tag = listType === "ol" ? "ol" : "ul";
-    chunks.push(`<${tag}>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</${tag}>`);
-    listType = null;
-    listItems = [];
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    if (/^---+$/.test(trimmed) || /^\*\*\*+$/.test(trimmed)) {
-      flushParagraph();
-      flushList();
-      chunks.push("<hr>");
-      continue;
-    }
-
-    const tableHeader = splitMarkdownTableRow(trimmed);
-    const tableSeparator = lines[index + 1] ? lines[index + 1].trim() : "";
-    if (tableHeader && tableHeader.length > 1 && isMarkdownTableSeparator(tableSeparator)) {
-      flushParagraph();
-      flushList();
-
-      const tableRows = [];
-      let nextIndex = index + 2;
-      while (nextIndex < lines.length) {
-        const nextLine = lines[nextIndex].trim();
-        const nextRow = splitMarkdownTableRow(nextLine);
-        if (!nextLine || !nextRow || nextRow.length < 2) {
-          break;
-        }
-
-        tableRows.push(nextRow);
-        nextIndex += 1;
-      }
-
-      if (tableRows.length > 0) {
-        chunks.push(renderMarkdownTable(tableHeader, tableRows));
-        index = nextIndex - 1;
-        continue;
-      }
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
-    if (headingMatch) {
-      flushParagraph();
-      flushList();
-      const level = headingMatch[1].length;
-      chunks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    const unorderedMatch = trimmed.match(/^[-*]\s+(.*)$/);
-    if (unorderedMatch) {
-      flushParagraph();
-      if (listType && listType !== "ul") {
-        flushList();
-      }
-      listType = "ul";
-      listItems.push(unorderedMatch[1]);
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^\d+\.\s+(.*)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      if (listType && listType !== "ol") {
-        flushList();
-      }
-      listType = "ol";
-      listItems.push(orderedMatch[1]);
-      continue;
-    }
-
-    flushList();
-    paragraphLines.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-
-  return chunks.join("");
+  return lines
+    .map((line) => (line ? `<div>${escapeHtml(line)}</div>` : "<div><br></div>"))
+    .join("");
 }
 
 function setPlainTextContent(editor, text) {
@@ -391,10 +331,6 @@ function setPlainTextContent(editor, text) {
   }
 }
 
-function setRichTextContent(editor, html) {
-  editor.innerHTML = html || "<p><br></p>";
-}
-
 function notifyFieldChanged(editor, text) {
   editor.dispatchEvent(new InputEvent("input", {
     bubbles: true,
@@ -404,49 +340,55 @@ function notifyFieldChanged(editor, text) {
   editor.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function insertPlainText(editor, text) {
+  const doc = editor.ownerDocument;
+  if (typeof doc.execCommand !== "function") {
+    return false;
+  }
+
+  try {
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(editor);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return doc.execCommand("insertHTML", false, plainTextToEditorHtml(text));
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} execCommand insertHTML failed, falling back to manual update.`, error);
+    return false;
+  }
+}
+
 function updateDescriptionEditor(editor, text) {
+  const plainText = htmlToPlainText(text);
   console.log(`${LOG_PREFIX} Updating description editor`, {
     tagName: editor.tagName,
     contentEditable: editor.contentEditable,
-    textLength: text.length,
+    textLength: plainText.length,
   });
 
   if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
     editor.focus();
-    editor.value = text;
-    notifyFieldChanged(editor, text);
+    editor.value = plainText;
+    notifyFieldChanged(editor, plainText);
     console.log(`${LOG_PREFIX} Description updated via value assignment.`);
     return;
   }
 
   editor.focus();
 
-  const doc = editor.ownerDocument;
-  const html = renderMarkdownToHtml(text);
-  if (typeof doc.execCommand === "function") {
-    try {
-      const selection = doc.getSelection();
-      const range = doc.createRange();
-      range.selectNodeContents(editor);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      const inserted = doc.execCommand("insertHTML", false, html);
-      if (inserted) {
-        notifyFieldChanged(editor, text);
-        console.log(`${LOG_PREFIX} Description updated via execCommand insertHTML.`);
-        return;
-      }
-    } catch (error) {
-      console.warn(`${LOG_PREFIX} execCommand insertHTML failed, falling back to manual update.`, error);
-    }
+  if (insertPlainText(editor, plainText)) {
+    notifyFieldChanged(editor, plainText);
+    console.log(`${LOG_PREFIX} Description updated with plain text.`);
+    return;
   }
 
-  setRichTextContent(editor, html);
-  notifyFieldChanged(editor, text);
-  console.log(`${LOG_PREFIX} Description updated via manual HTML DOM update.`);
+  setPlainTextContent(editor, plainText);
+  notifyFieldChanged(editor, plainText);
+  console.log(`${LOG_PREFIX} Description updated via plain text DOM update.`);
 }
 
-function requestAiRewrite({ text, title }, timeoutMs = 100000) {
+function requestAiRewrite({ text, title, kind }, timeoutMs = 100000) {
   return new Promise((resolve, reject) => {
     const timerId = window.setTimeout(() => {
       console.error(`${LOG_PREFIX} rewriteDescription timed out after ${timeoutMs}ms.`);
@@ -458,6 +400,7 @@ function requestAiRewrite({ text, title }, timeoutMs = 100000) {
         action: "rewriteDescription",
         text,
         title,
+        kind,
       },
       (response) => {
         window.clearTimeout(timerId);
@@ -524,16 +467,6 @@ function ensureAiButtonStyles() {
     }
 
     .${AI_BUTTON_CLASS}[data-state="pending"] .wi-ai-icon-core {
-      animation: wi-ai-icon-breathe 1.2s ease-in-out infinite;
-    }
-
-    .${AI_BUTTON_CLASS} .wi-ai-icon-spinner {
-      opacity: 0;
-    }
-
-    .${AI_BUTTON_CLASS}[data-state="pending"] .wi-ai-icon-spinner {
-      opacity: 1;
-      transform-origin: 9px 9px;
       animation: wi-ai-icon-spin 1s linear infinite;
     }
 
@@ -550,18 +483,6 @@ function ensureAiButtonStyles() {
         transform: rotate(360deg);
       }
     }
-
-    @keyframes wi-ai-icon-breathe {
-      0%, 100% {
-        transform: scale(0.92);
-        opacity: 0.88;
-      }
-
-      50% {
-        transform: scale(1.06);
-        opacity: 1;
-      }
-    }
   `;
   document.head.appendChild(style);
 }
@@ -576,15 +497,7 @@ function renderAiButtonContent(isPending = false) {
             <stop offset="0.42" stop-color="#6E45FF"></stop>
             <stop offset="1" stop-color="#2E6BFF"></stop>
           </linearGradient>
-          <linearGradient id="wiNotifyAiSpinnerGradient" x1="4" y1="4" x2="14" y2="14" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#B58CFF" stop-opacity="0.15"></stop>
-            <stop offset="0.55" stop-color="#6E45FF" stop-opacity="0.95"></stop>
-            <stop offset="1" stop-color="#2E6BFF" stop-opacity="0.15"></stop>
-          </linearGradient>
         </defs>
-        <g class="wi-ai-icon-spinner">
-          <path d="M9 1.8C12.98 1.8 16.2 5.02 16.2 9" stroke="url(#wiNotifyAiSpinnerGradient)" stroke-width="1.5" stroke-linecap="round"></path>
-        </g>
         <g class="wi-ai-icon-core">
           <path d="M9 2.15C9.76 4.63 10.82 5.88 12.12 6.88C13.12 7.64 14.37 8.23 16.85 9C14.37 9.77 13.12 10.36 12.12 11.12C10.82 12.12 9.76 13.37 9 15.85C8.24 13.37 7.18 12.12 5.88 11.12C4.88 10.36 3.63 9.77 1.15 9C3.63 8.23 4.88 7.64 5.88 6.88C7.18 5.88 8.24 4.63 9 2.15Z" fill="url(#wiNotifyAiGradient)"></path>
           <path d="M9 4.35C9.48 5.74 10.17 6.5 10.97 7.12C11.63 7.63 12.43 8.02 13.96 8.53C12.43 9.04 11.63 9.43 10.97 9.94C10.17 10.56 9.48 11.32 9 12.71C8.52 11.32 7.83 10.56 7.03 9.94C6.37 9.43 5.57 9.04 4.04 8.53C5.57 8.02 6.37 7.63 7.03 7.12C7.83 6.5 8.52 5.74 9 4.35Z" fill="white" fill-opacity="0.18"></path>
@@ -594,35 +507,44 @@ function renderAiButtonContent(isPending = false) {
   `;
 }
 
-function createAiButton() {
+function createAiButton(field) {
   ensureAiButtonStyles();
+  const isDiscussion = field.kind === "discussion";
   const button = document.createElement("button");
   button.className = `${AI_BUTTON_CLASS} bolt-button bolt-button-secondary bolt-icon-button`;
   button.dataset.wiNotifyAiBuild = BUILD_MARK;
+  button.dataset.wiNotifyAiKind = field.kind;
   button.dataset.state = "idle";
   button.type = "button";
   button.innerHTML = renderAiButtonContent(false);
-  button.title = `Rewrite description with AI (${BUILD_MARK})`;
+  button.title = isDiscussion
+    ? `Rewrite comment with AI (${BUILD_MARK})`
+    : `Rewrite description with AI (${BUILD_MARK})`;
 
   button.addEventListener("click", async () => {
-    console.log(`${LOG_PREFIX} AI Rewrite button clicked.`);
-    const descriptionField = findDescriptionEditor();
-    if (!descriptionField) {
-      console.error(`${LOG_PREFIX} Click aborted: description editor not found.`);
-      alert("Could not find the description editor.");
+    console.log(`${LOG_PREFIX} AI Rewrite button clicked.`, { kind: field.kind });
+    const editor = resolveEditorFromButton(button, field.editor);
+    if (!editor) {
+      console.error(`${LOG_PREFIX} Click aborted: ${field.fieldName} editor not found.`);
+      alert(isDiscussion
+        ? "Could not find the comment editor."
+        : "Could not find the description editor.");
       return;
     }
 
-    const originalText = getEditorText(descriptionField);
+    const originalText = getEditorText(editor);
     const workItemTitle = findWorkItemTitle();
-    console.log(`${LOG_PREFIX} Original description collected.`, {
+    console.log(`${LOG_PREFIX} Original ${field.fieldName} text collected.`, {
+      kind: field.kind,
       titleLength: workItemTitle.length,
       textLength: originalText.length,
       preview: originalText.slice(0, 200),
     });
     if (!originalText.trim()) {
-      console.warn(`${LOG_PREFIX} Click aborted: description is empty.`);
-      alert("Description field is empty. Please enter some text to rewrite.");
+      console.warn(`${LOG_PREFIX} Click aborted: ${field.fieldName} is empty.`);
+      alert(isDiscussion
+        ? "Comment field is empty. Please enter some text to rewrite."
+        : "Description field is empty. Please enter some text to rewrite.");
       return;
     }
 
@@ -632,17 +554,19 @@ function createAiButton() {
 
     try {
       console.log(`${LOG_PREFIX} Sending rewriteDescription message to background.`, {
+        kind: field.kind,
         titleLength: workItemTitle.length,
         textLength: originalText.length,
       });
       const response = await requestAiRewrite({
         text: originalText,
         title: workItemTitle,
+        kind: field.kind,
       });
       console.log(`${LOG_PREFIX} Received response from background.`, response);
 
       if (response?.ok && typeof response.rewrittenText === "string") {
-        updateDescriptionEditor(descriptionField, response.rewrittenText);
+        updateDescriptionEditor(editor, response.rewrittenText);
       } else if (response && response.error) {
         console.error(`${LOG_PREFIX} Background returned AI error.`, response.error);
         alert(`AI Rewrite Error: ${response.error}`);
@@ -692,27 +616,34 @@ function pingAiBackground(timeoutMs = 5000) {
 }
 
 function addAiButtonToDescriptionToolbar() {
-  // AI временно отключён: не вставляем кнопку, убираем уже вставленную.
   if (!AI_FEATURES_ENABLED) {
     document.querySelectorAll(`.${AI_BUTTON_CONTAINER_CLASS}`).forEach((node) => node.remove());
     return false;
   }
 
-  const toolbarHost = findDescriptionToolbarHost();
-  if (!toolbarHost) {
-    return false;
+  let mounted = false;
+
+  for (const field of findRichTextEditors()) {
+    const toolbarHost = findToolbarHostForEditor(field.host);
+    if (!toolbarHost) {
+      continue;
+    }
+
+    if (toolbarHost.querySelector(`.${AI_BUTTON_CLASS}`)) {
+      mounted = true;
+      continue;
+    }
+
+    const buttonContainer = document.createElement("div");
+    buttonContainer.className = AI_BUTTON_CONTAINER_CLASS;
+    buttonContainer.dataset.wiNotifyAiKind = field.kind;
+    buttonContainer.appendChild(createAiButton(field));
+    toolbarHost.insertBefore(buttonContainer, toolbarHost.firstChild);
+    console.log(`${LOG_PREFIX} AI button mounted in ${field.fieldName} toolbar.`);
+    mounted = true;
   }
 
-  if (toolbarHost.querySelector(`.${AI_BUTTON_CLASS}`)) {
-    return true;
-  }
-
-  const buttonContainer = document.createElement("div");
-  buttonContainer.className = AI_BUTTON_CONTAINER_CLASS;
-  buttonContainer.appendChild(createAiButton());
-  toolbarHost.insertBefore(buttonContainer, toolbarHost.firstChild);
-  console.log(`${LOG_PREFIX} AI button mounted in Description toolbar.`);
-  return true;
+  return mounted;
 }
 
 // ---------------------------------------------------------------------------
@@ -2252,7 +2183,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 let uiMountTimerId = null;
 let isMutatingUi = false;
 
-/** Debounce только для AI-кнопки в Description; пункт меню «...» монтируется сразу. */
+/** Debounce только для AI-кнопки в Description/Discussion; пункт меню «...» монтируется сразу. */
 const UI_MOUNT_DEBOUNCE_MS = 400;
 
 function scheduleUiMount() {
@@ -2303,12 +2234,10 @@ if (AI_FEATURES_ENABLED) {
       return;
     }
 
-    const descriptionEditor = findDescriptionEditor();
-    if (!descriptionEditor) {
-      return;
-    }
-
-    if (target === descriptionEditor || descriptionEditor.contains(target)) {
+    if (
+      /^(Description|Discussion)$/i.test(target.getAttribute("aria-label") || "")
+      || target.closest(".html-editor, .discussion-message-entry, .work-item-discussion-control")
+    ) {
       scheduleUiMount();
     }
   });

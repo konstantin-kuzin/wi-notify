@@ -2,7 +2,7 @@ import { loadAiConfig } from "./ai-config.mjs";
 
 const AI_REQUEST_TIMEOUT_MS = 90000;
 const RUNTIME_SERVICE_PROMPT_SUFFIX = [
-  "Верни только финальный текст для поля Description.",
+  "Верни только финальный текст",
   "Не используй markdown-таблицы, ASCII-таблицы и HTML-таблицы.",
   "Если нужно сравнение или структура, используй списки и обычные абзацы.",
 ].join(" ");

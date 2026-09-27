@@ -10,9 +10,26 @@
     <main class="options">
       <h1 class="options__title">Настройки</h1>
 
-      <form id="options-form" class="options__form">
-        <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Основные настройки</legend>
+      <nav class="options__tabs" role="tablist" aria-label="Вкладки настроек">
+        <button class="options__tab" type="button" role="tab" aria-selected="true" aria-controls="panel-basic" data-tab="basic" tabindex="0">
+          Основные
+        </button>
+        <button class="options__tab" type="button" role="tab" aria-selected="false" aria-controls="panel-review" data-tab="review" tabindex="-1">
+          Дизайн-ревью
+        </button>
+        <button class="options__tab" type="button" role="tab" aria-selected="false" aria-controls="panel-custom-buttons" data-tab="custom-buttons" tabindex="-1">
+          Свои кнопки
+        </button>
+        <button class="options__tab" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" data-tab="ai" tabindex="-1">
+          Настройки AI
+        </button>
+      </nav>
+
+      <div class="options__panels">
+        <section id="panel-basic" class="options__panel" role="tabpanel" aria-labelledby="tab-basic" hidden>
+          <form id="options-form" class="options__form">
+            <fieldset class="options__fieldset">
+              <legend class="options__fieldset-legend">Основные настройки</legend>
 
         <label class="options__field">
           <span class="options__label">Коллекция</span>
@@ -61,10 +78,12 @@
            <span class="options__status" id="save-status" role="status"></span>
          </div>
         </fieldset>
-      </form>
+        </form>
+        </section>
 
-      <form id="review-options-form" class="options__form">
-        <fieldset class="options__fieldset" id="review-fieldset">
+        <section id="panel-review" class="options__panel" role="tabpanel" aria-labelledby="tab-review" hidden>
+          <form id="review-options-form" class="options__form">
+            <fieldset class="options__fieldset" id="review-fieldset">
           <legend class="options__fieldset-legend options__fieldset-legend--with-toggle">
             <label class="options__switch" title="Включить создание задачи на ревью">
               <input
@@ -184,11 +203,13 @@
             </div>
           </div>
         </fieldset>
-      </form>
+        </form>
+        </section>
 
-      <section class="options__form" id="custom-buttons-section">
-        <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Кастомные кнопки для создания задач</legend>
+        <section id="panel-custom-buttons" class="options__panel" role="tabpanel" aria-labelledby="tab-custom-buttons" hidden>
+          <section class="options__form" id="custom-buttons-section">
+            <fieldset class="options__fieldset">
+              <legend class="options__fieldset-legend">Кастомные кнопки для создания задач</legend>
           <p class="options__hint">
             Каждая кнопка появится в меню «…» формы задачи под «Design Review Task» и создаст свой Work Item.
           </p>
@@ -304,10 +325,12 @@
           </label>
         </div>
       </template>
+        </section>
 
-      <form id="ai-options-form" class="options__form">
-        <fieldset class="options__fieldset">
-          <legend class="options__fieldset-legend">Настройки AI</legend>
+        <section id="panel-ai" class="options__panel" role="tabpanel" aria-labelledby="tab-ai" hidden>
+          <form id="ai-options-form" class="options__form">
+            <fieldset class="options__fieldset">
+              <legend class="options__fieldset-legend">Настройки AI</legend>
           <label class="options__field">
             <span class="options__label">AI Base URL</span>
             <input
@@ -318,12 +341,13 @@
               autocomplete="off"
               placeholder="https://api.openai.com/v1"
               required
+              disabled
             >
-            <span class="options__hint">URL для OpenAI-совместимого API.</span>
+            <span class="options__hint">URL для OpenAI-совместимого API</span>
           </label>
 
           <label class="options__field">
-            <span class="options__label">AI API Key</span>
+            <span class="options__label">API Key</span>
             <input
               class="options__input"
               id="ai-api-key"
@@ -333,7 +357,7 @@
               placeholder="sk-…"
               required
             >
-            <span class="options__hint">API Key для авторизации.</span>
+            <span class="options__hint">API Key AI.AVP.RU для авторизации</span>
           </label>
 
           <label class="options__field">
@@ -351,22 +375,26 @@
           </label>
 
           <label class="options__field">
-            <span class="options__label">AI Service Prompt</span>
+            <span class="options__label">Промпт для AI</span>
             <textarea
               class="options__textarea"
               id="ai-service-prompt"
               name="aiServicePrompt"
+              rows="20"
               required
             ></textarea>
             <span class="options__hint">Системный промпт для AI.</span>
           </label>
 
           <div class="options__actions">
-            <button class="options__button" type="button" id="save-ai-button">Сохранить AI настройки</button>
+            <button class="options__button" type="button" id="save-ai-button">Сохранить</button>
             <span class="options__status" id="save-ai-status" role="status"></span>
           </div>
+
         </fieldset>
-      </form>
+        </form>
+        </section>
+      </div>
     </main>
     <script type="module" src="options.mjs"></script>
   </body>
