@@ -1,5 +1,5 @@
 const LOG_PREFIX = "[WI Notify AI]";
-const BUILD_MARK = "2026-09-21-01";
+const BUILD_MARK = "2026-09-28-01";
 
 console.log(`${LOG_PREFIX} Content script loaded.`, { build: BUILD_MARK });
 
@@ -61,7 +61,11 @@ function isVisible(element) {
 
 function resolveEditorCandidate(candidate) {
   if (candidate instanceof HTMLIFrameElement) {
-    return candidate.contentDocument?.body || null;
+    const body = candidate.contentDocument?.body || null;
+    if (body) {
+      trackEditorSelections(body.ownerDocument);
+    }
+    return body;
   }
 
   if (candidate instanceof HTMLElement && isVisible(candidate)) {
@@ -359,6 +363,154 @@ function insertPlainText(editor, text) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Выделение: отправляем в AI только выделенный текст и заменяем только его
+// ---------------------------------------------------------------------------
+
+/** Последнее несхлопнутое выделение внутри редактора (клик по кнопке его сбрасывает). */
+const savedSelectionByEditor = new WeakMap();
+const selectionTrackedDocuments = new WeakSet();
+
+function trackEditorSelections(doc) {
+  if (!doc || selectionTrackedDocuments.has(doc)) {
+    return;
+  }
+
+  selectionTrackedDocuments.add(doc);
+  doc.addEventListener("selectionchange", () => {
+    const selection = doc.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    let node = range.commonAncestorContainer;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      node = node.parentElement;
+    }
+
+    const editor = node?.closest("[contenteditable='true']");
+    if (editor instanceof HTMLElement) {
+      savedSelectionByEditor.set(editor, range.cloneRange());
+    }
+  });
+}
+
+/**
+ * Текущее или последнее сохранённое выделение внутри редактора.
+ * @returns {{ type: "input", start: number, end: number, before: string, after: string }
+ *   | { type: "dom", range: Range }
+ *   | null}
+ */
+function captureEditorSelection(editor) {
+  if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+    const start = editor.selectionStart ?? 0;
+    const end = editor.selectionEnd ?? 0;
+    if (start === end) {
+      return null;
+    }
+    return {
+      type: "input",
+      start,
+      end,
+      before: editor.value.slice(0, start),
+      after: editor.value.slice(end),
+    };
+  }
+
+  const doc = editor.ownerDocument;
+  const selection = doc.getSelection();
+  if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+    const range = selection.getRangeAt(0);
+    if (editor.contains(range.commonAncestorContainer)) {
+      return { type: "dom", range: range.cloneRange() };
+    }
+  }
+
+  const saved = savedSelectionByEditor.get(editor);
+  if (
+    saved
+    && saved.startContainer.isConnected
+    && saved.endContainer.isConnected
+    && editor.contains(saved.commonAncestorContainer)
+  ) {
+    return { type: "dom", range: saved.cloneRange() };
+  }
+
+  return null;
+}
+
+/** Заменяет ранее захваченное выделение новым текстом, не трогая остальное. */
+function applyRewrittenSelection(editor, selectionInfo, rewrittenText) {
+  const plainText = htmlToPlainText(rewrittenText);
+
+  if (selectionInfo.type === "input") {
+    const value = editor.value;
+    let { start, end } = selectionInfo;
+
+    // Пользователь успел отредактировать поле — пробуем текущее выделение.
+    if (value.slice(0, selectionInfo.start) !== selectionInfo.before
+      || value.slice(selectionInfo.end) !== selectionInfo.after) {
+      const currentStart = editor.selectionStart ?? 0;
+      const currentEnd = editor.selectionEnd ?? 0;
+      if (currentStart === currentEnd) {
+        return false;
+      }
+      start = currentStart;
+      end = currentEnd;
+    }
+
+    editor.focus();
+    editor.setRangeText(plainText, start, end, "end");
+    notifyFieldChanged(editor, plainText);
+    console.log(`${LOG_PREFIX} Rewritten selection applied to input field.`, {
+      start,
+      end,
+      textLength: plainText.length,
+    });
+    return true;
+  }
+
+  const { range } = selectionInfo;
+  if (!range.startContainer.isConnected
+    || !range.endContainer.isConnected
+    || !editor.contains(range.commonAncestorContainer)) {
+    return false;
+  }
+
+  editor.focus();
+
+  const doc = editor.ownerDocument;
+  let applied = false;
+  try {
+    const selection = doc.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    applied = typeof doc.execCommand === "function"
+      && doc.execCommand("insertHTML", false, plainTextToEditorHtml(plainText));
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} execCommand insertHTML for selection failed.`, error);
+  }
+
+  if (!applied) {
+    try {
+      const fragment = range.createContextualFragment(plainTextToEditorHtml(plainText));
+      range.deleteContents();
+      range.insertNode(fragment);
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Failed to replace selected range.`, error);
+      return false;
+    }
+  }
+
+  notifyFieldChanged(editor, plainText);
+  console.log(`${LOG_PREFIX} Rewritten selection applied to editor.`, {
+    textLength: plainText.length,
+    viaExecCommand: applied,
+  });
+  return true;
+}
+
 function updateDescriptionEditor(editor, text) {
   const plainText = htmlToPlainText(text);
   console.log(`${LOG_PREFIX} Updating description editor`, {
@@ -388,8 +540,36 @@ function updateDescriptionEditor(editor, text) {
   console.log(`${LOG_PREFIX} Description updated via plain text DOM update.`);
 }
 
+/**
+ * После reload/обновления расширения старый content script остаётся на странице,
+ * но chrome.runtime уже мёртв — любой sendMessage падает с
+ * "Extension context invalidated". Лечится только перезагрузкой страницы.
+ */
+const EXTENSION_CONTEXT_INVALIDATED_MESSAGE = "Extension context invalidated";
+
+function isExtensionContextValid() {
+  try {
+    return Boolean(chrome.runtime?.id);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isExtensionContextInvalidatedError(error) {
+  return String(error?.message || error || "").includes(EXTENSION_CONTEXT_INVALIDATED_MESSAGE);
+}
+
+function alertExtensionContextInvalidated() {
+  alert("Расширение WI Notify было обновлено или перезагружено. Обновите страницу (F5) и повторите.");
+}
+
 function requestAiRewrite({ text, title, kind }, timeoutMs = 100000) {
   return new Promise((resolve, reject) => {
+    if (!isExtensionContextValid()) {
+      reject(new Error(EXTENSION_CONTEXT_INVALIDATED_MESSAGE));
+      return;
+    }
+
     const timerId = window.setTimeout(() => {
       console.error(`${LOG_PREFIX} rewriteDescription timed out after ${timeoutMs}ms.`);
       reject(new Error(`Timed out waiting for AI rewrite response after ${timeoutMs}ms.`));
@@ -532,12 +712,20 @@ function createAiButton(field) {
       return;
     }
 
-    const originalText = getEditorText(editor);
+    const selectionInfo = captureEditorSelection(editor);
+    const selectedText = selectionInfo
+      ? (selectionInfo.type === "input"
+        ? editor.value.slice(selectionInfo.start, selectionInfo.end)
+        : selectionInfo.range.toString())
+      : "";
+    const useSelection = Boolean(selectedText.trim());
+    const originalText = useSelection ? selectedText : getEditorText(editor);
     const workItemTitle = findWorkItemTitle();
     console.log(`${LOG_PREFIX} Original ${field.fieldName} text collected.`, {
       kind: field.kind,
       titleLength: workItemTitle.length,
       textLength: originalText.length,
+      fromSelection: useSelection,
       preview: originalText.slice(0, 200),
     });
     if (!originalText.trim()) {
@@ -566,7 +754,18 @@ function createAiButton(field) {
       console.log(`${LOG_PREFIX} Received response from background.`, response);
 
       if (response?.ok && typeof response.rewrittenText === "string") {
-        updateDescriptionEditor(editor, response.rewrittenText);
+        if (useSelection) {
+          if (applyRewrittenSelection(editor, selectionInfo, response.rewrittenText)) {
+            console.log(`${LOG_PREFIX} Rewritten selection applied.`);
+          } else {
+            console.error(`${LOG_PREFIX} Rewritten selection lost before response arrived.`);
+            alert(isDiscussion
+              ? "Не удалось применить результат: выделение в комментарии изменилось."
+              : "Не удалось применить результат: выделение в описании изменилось.");
+          }
+        } else {
+          updateDescriptionEditor(editor, response.rewrittenText);
+        }
       } else if (response && response.error) {
         console.error(`${LOG_PREFIX} Background returned AI error.`, response.error);
         alert(`AI Rewrite Error: ${response.error}`);
@@ -575,8 +774,13 @@ function createAiButton(field) {
         alert("AI Rewrite failed: No response or unexpected response from background script.");
       }
     } catch (error) {
-      console.error(`${LOG_PREFIX} Error during AI rewrite.`, error);
-      alert(`An error occurred during AI rewrite: ${error.message}`);
+      if (isExtensionContextInvalidatedError(error)) {
+        console.error(`${LOG_PREFIX} Extension context invalidated on AI rewrite.`, error);
+        alertExtensionContextInvalidated();
+      } else {
+        console.error(`${LOG_PREFIX} Error during AI rewrite.`, error);
+        alert(`An error occurred during AI rewrite: ${error.message}`);
+      }
     } finally {
       button.disabled = false;
       button.dataset.state = "idle";
@@ -1137,8 +1341,13 @@ async function handleCreateReviewClick(control) {
       );
     }
   } catch (error) {
-    console.error(`${LOG_PREFIX} Create review task failed.`, error);
-    showReviewToast(`Ошибка при создании задачи на ревью: ${error.message}`, "error");
+    if (isExtensionContextInvalidatedError(error)) {
+      console.error(`${LOG_PREFIX} Extension context invalidated on create review task.`, error);
+      alertExtensionContextInvalidated();
+    } else {
+      console.error(`${LOG_PREFIX} Create review task failed.`, error);
+      showReviewToast(`Ошибка при создании задачи на ревью: ${error.message}`, "error");
+    }
   } finally {
     control.dataset.state = "idle";
     if (control instanceof HTMLButtonElement) {
@@ -1443,8 +1652,13 @@ async function handleCustomButtonClick(control, buttonId) {
       showReviewToast(`Не удалось создать задачу: ${response?.error ?? "неизвестная ошибка"}`, "error");
     }
   } catch (error) {
-    console.error(`${LOG_PREFIX} Create custom work item failed.`, error);
-    showReviewToast(`Ошибка при создании задачи: ${error.message}`, "error");
+    if (isExtensionContextInvalidatedError(error)) {
+      console.error(`${LOG_PREFIX} Extension context invalidated on create custom work item.`, error);
+      alertExtensionContextInvalidated();
+    } else {
+      console.error(`${LOG_PREFIX} Create custom work item failed.`, error);
+      showReviewToast(`Ошибка при создании задачи: ${error.message}`, "error");
+    }
   } finally {
     control.dataset.state = "idle";
     control.setAttribute("aria-disabled", "false");
@@ -2246,6 +2460,7 @@ if (AI_FEATURES_ENABLED) {
 }
 
 loadReviewConfigCache();
+trackEditorSelections(document);
 mountReviewOverflowNow();
 scheduleUiMount();
 
