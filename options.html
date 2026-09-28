@@ -400,19 +400,26 @@
               >
             </label>
 
-            <label class="options__field">
+            <div class="options__field">
               <span class="options__label">AI Model</span>
-              <input
-                class="options__input"
-                id="ai-model"
-                name="aiModel"
-                type="text"
-                autocomplete="off"
-                placeholder="gpt-4o"
-                required
-              >
-              <span class="options__hint">Имя модели, например, gpt-4o.</span>
-            </label>
+              <div class="ai-model-row">
+                <select
+                  class="options__input"
+                  id="ai-model"
+                  name="aiModel"
+                  required
+                >
+                  <option value="">— укажите ключ и обновите список моделей —</option>
+                </select>
+                <button
+                  class="options__button options__button--secondary ai-model-refresh"
+                  type="button"
+                  id="ai-model-refresh"
+                  title="Обновить список моделей"
+                >Обновить</button>
+              </div>
+              <span class="options__hint">Список моделей запрашивается с сервера провайдера. Кнопка «Обновить» перезагружает список.</span>
+            </div>
 
             <label class="options__field">
               <span class="options__label">Промпт для AI</span>

@@ -162,6 +162,24 @@ select.options__input {
   min-height: 72px;
 }
 
+/* Строка выбора модели: селект + кнопка обновления списка. */
+.ai-model-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ai-model-row .options__input {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+}
+
+.ai-model-row .ai-model-refresh {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+}
+
 .options__hint {
   font-size: 12px;
   color: var(--muted);

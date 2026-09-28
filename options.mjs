@@ -14,6 +14,7 @@ import {
   loadRawAiConfig,
   validateAiConfig,
 } from "./ai-config.mjs";
+import { fetchAiModels } from "./ai-api.mjs";
 const form = document.querySelector("#options-form");
 const apiRootInput = document.querySelector("#api-root");
 const projectInput = document.querySelector("#project");
@@ -48,10 +49,14 @@ const aiOptionsBody = document.querySelector("#ai-options-body");
 const aiUseFixedProviderInput = document.querySelector("#ai-use-fixed-provider");
 const aiBaseUrlInput = document.querySelector("#ai-base-url");
 const aiApiKeyInput = document.querySelector("#ai-api-key");
-const aiModelInput = document.querySelector("#ai-model");
+const aiModelSelect = document.querySelector("#ai-model");
+const aiModelRefreshButton = document.querySelector("#ai-model-refresh");
 const aiServicePromptTextarea = document.querySelector("#ai-service-prompt");
 const saveAiButton = document.querySelector("#save-ai-button");
 const saveAiStatus = document.querySelector("#save-ai-status");
+
+/** Кэш последнего успешно загруженного списка моделей провайдера. */
+let aiModelsCache = null;
 
 /**
  * Единый статус сохранения рядом с кнопкой.
@@ -135,12 +140,26 @@ async function init() {
   aiUseFixedProviderInput.checked = Boolean(aiConfig.useFixedProvider);
   aiBaseUrlInput.value = aiConfig.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl;
   aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
-  aiModelInput.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
+  aiModelSelect.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
   aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
   await applyAiProviderUi();
 
   aiUseFixedProviderInput.addEventListener("change", () => {
     void applyAiProviderUi();
+  });
+
+  aiModelRefreshButton.addEventListener("click", () => {
+    void refreshAiModels({ allowPermissionRequest: true });
+  });
+
+  aiBaseUrlInput.addEventListener("change", () => {
+    invalidateAiModelsCache();
+    void refreshAiModels({ silent: true });
+  });
+
+  aiApiKeyInput.addEventListener("change", () => {
+    invalidateAiModelsCache();
+    void refreshAiModels({ silent: true });
   });
 
   aiEnabledInput.addEventListener("change", () => {
@@ -172,6 +191,86 @@ async function buildConfigForApi() {
 }
 
 /**
+ * Заполняет селект моделей. Текущее (сохранённое) значение сохраняется,
+ * даже если его ещё нет в загруженном списке.
+ * @param {string[]} models
+ * @param {string} [selectedModel]
+ */
+function setAiModelOptions(models, selectedModel) {
+  const previousValue = selectedModel ?? aiModelSelect.value;
+  aiModelSelect.textContent = "";
+
+  const ids = [...new Set(models)];
+  if (previousValue && !ids.includes(previousValue)) {
+    ids.unshift(previousValue);
+  }
+
+  if (ids.length === 0) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— укажите ключ и обновите список моделей —";
+    aiModelSelect.append(placeholder);
+    return;
+  }
+
+  for (const id of ids) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = id;
+    aiModelSelect.append(option);
+  }
+
+  aiModelSelect.value = previousValue && ids.includes(previousValue) ? previousValue : ids[0];
+}
+
+/** Сбрасывает кэш списка моделей и очищает селект. */
+function invalidateAiModelsCache() {
+  aiModelsCache = null;
+  setAiModelOptions([]);
+}
+
+/**
+ * Загружает список моделей провайдера и заполняет селект.
+ * @param {{ allowPermissionRequest?: boolean, silent?: boolean }} [options]
+ */
+async function refreshAiModels(options = {}) {
+  const { allowPermissionRequest = false, silent = false } = options;
+
+  if (aiUseFixedProviderInput.checked) {
+    return;
+  }
+
+  const baseUrl = aiBaseUrlInput.value.trim();
+  const apiKey = aiApiKeyInput.value.trim();
+
+  if (!baseUrl || !apiKey) {
+    setAiModelOptions([]);
+    if (!silent) {
+      setOptionsStatus(saveAiStatus, "Укажите Base URL и API Key, затем обновите список моделей.", "err");
+    }
+    return;
+  }
+
+  if (!silent) {
+    setOptionsStatus(saveAiStatus, "Загрузка списка моделей…");
+  }
+
+  try {
+    const models = await fetchAiModels(baseUrl, apiKey, { allowPermissionRequest });
+    aiModelsCache = models;
+    setAiModelOptions(models);
+    if (!silent) {
+      setOptionsStatus(saveAiStatus, `Список моделей обновлён: ${models.length}`, "ok");
+    }
+  } catch (error) {
+    console.error("[WI Notify Options] Failed to load AI models.", error);
+    if (!silent) {
+      setOptionsStatus(saveAiStatus, "Не удалось загрузить список моделей: " + error.message, "err");
+    }
+  }
+}
+
+/**
  * Синхронизирует поля Base URL и Model с тогглом «Провайдер AI»:
  * включён — поля скрыты, применяются фиксированные значения,
  * выключен — поля видимы и показывают сохранённые пользовательские значения.
@@ -181,17 +280,18 @@ async function applyAiProviderUi() {
 
   if (fixed) {
     aiBaseUrlInput.value = FIXED_AI_BASE_URL;
-    aiModelInput.value = FIXED_AI_MODEL;
+    setAiModelOptions([FIXED_AI_MODEL], FIXED_AI_MODEL);
   } else {
     const stored = await loadRawAiConfig();
     aiBaseUrlInput.value = stored.baseUrl ?? "";
-    aiModelInput.value = stored.model ?? "";
+    setAiModelOptions(aiModelsCache ?? [], stored.model ?? "");
+    void refreshAiModels({ silent: true });
   }
 
   aiBaseUrlInput.required = !fixed;
-  aiModelInput.required = !fixed;
+  aiModelSelect.required = !fixed;
   aiBaseUrlInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
-  aiModelInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
+  aiModelSelect.closest(".options__field")?.toggleAttribute("hidden", fixed);
 }
 
 async function buildAiConfigForSave() {
@@ -202,7 +302,7 @@ async function buildAiConfigForSave() {
     useFixedProvider: aiUseFixedProviderInput.checked,
     baseUrl: aiBaseUrlInput.value.trim(),
     apiKey: aiApiKeyInput.value.trim(),
-    model: aiModelInput.value.trim(),
+    model: aiModelSelect.value.trim(),
     servicePrompt: aiServicePromptTextarea.value.trim(),
   });
 }

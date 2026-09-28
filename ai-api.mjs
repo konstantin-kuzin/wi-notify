@@ -31,6 +31,85 @@ async function ensureAiHostPermission(baseUrl) {
   );
 }
 
+/**
+ * Загружает список моделей OpenAI-совместимого провайдера (GET {baseUrl}/models).
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {{ allowPermissionRequest?: boolean }} [options]
+ * @returns {Promise<string[]>} Список идентификаторов моделей.
+ */
+export async function fetchAiModels(baseUrl, apiKey, options = {}) {
+  const { allowPermissionRequest = false } = options;
+
+  if (!baseUrl) {
+    throw new Error("AI Base URL is not configured.");
+  }
+  if (!apiKey) {
+    throw new Error("AI API Key is not configured.");
+  }
+
+  const normalizedBaseUrl = String(baseUrl).replace(/\/+$/, "");
+  const origins = [buildOriginPattern(baseUrl)];
+  let hasPermission = await chrome.permissions.contains({ origins });
+
+  if (!hasPermission && allowPermissionRequest) {
+    hasPermission = await chrome.permissions.request({ origins });
+    console.log("[WI Notify AI] AI host permission requested.", { origins, hasPermission });
+  }
+
+  if (!hasPermission) {
+    throw new Error(
+      `AI host permission is missing for ${origins[0]}. Нажмите «Обновить» ещё раз и разрешите доступ к серверу провайдера.`
+    );
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`AI models request timed out after ${AI_REQUEST_TIMEOUT_MS}ms.`));
+  }, AI_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${normalizedBaseUrl}/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = response.statusText;
+
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error?.message || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
+
+      throw new Error(`AI API error: ${response.status} - ${errorMessage}`);
+    }
+
+    const data = await response.json();
+    const models = Array.isArray(data?.data)
+      ? data.data.map((item) => String(item?.id ?? "")).filter(Boolean).sort((a, b) => a.localeCompare(b))
+      : [];
+
+    console.log("[WI Notify AI] AI models fetched.", { baseUrl: normalizedBaseUrl, count: models.length });
+    return models;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`AI models request timed out after ${AI_REQUEST_TIMEOUT_MS}ms.`);
+    }
+
+    console.error("[WI Notify AI] Error fetching AI models:", error);
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function chatCompletion(userMessage) {
   const config = await loadAiConfig();
   console.log("[WI Notify AI] AI config loaded for chatCompletion.", {
