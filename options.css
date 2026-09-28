@@ -39,10 +39,9 @@ body {
 .options__tab {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.35;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 400;
   border-radius: 99px;
   background: var(--tab-bg);
   color: var(--text);
@@ -268,6 +267,10 @@ select.options__input {
   display: none;
 }
 
+.options__fieldset--collapsed #ai-options-body {
+  display: none;
+}
+
 /* Переключатель включения блока «Задача на ревью» */
 .options__switch {
   position: relative;
@@ -287,8 +290,8 @@ select.options__input {
 
 .options__switch-track {
   display: block;
-  width: 36px;
-  height: 20px;
+  width: 34px;
+  height: 18px;
   border-radius: 999px;
   background: #c5c5c5;
   transition: background 0.15s ease;
@@ -297,10 +300,10 @@ select.options__input {
 
 .options__switch-thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
@@ -332,7 +335,7 @@ select.options__input {
   border: 0;
 }
 
-#review-options-body {
+#review-options-body, #ai-options-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -452,6 +455,27 @@ select.options__input {
   margin: 0 0 10px;
 }
 
+/* Тоггл «Провайдер AI» (AI.AVP.RU).
+   Специфичность селектора — как у .options__field > :not(.options__label),
+   иначе его display: block перебивает flex и тоггл с текстом разъезжаются по baseline. */
+.options__field > .ai-provider-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Центр трека на уровне центра текста лейбла: 8px (padding-top лейбла)
+     + ~9px (половина строки 14px × 1.3) − ~10px (половина высоты трека-строки) */
+  padding-top: 7px;
+}
+
+.ai-provider-toggle__text {
+  font-weight: 500;
+}
+
+/* display:block выше перебивает [hidden], поэтому явно скрываем */
+.options__field[hidden] {
+  display: none;
+}
+
 .options__groups-search-row {
   display: flex;
   flex-direction: row;
@@ -562,7 +586,6 @@ select.options__input {
 }
 
 /* Hide unused blocks */
-.options__field--locked,
 .options__field:has(#repository-id) {
   display: none;
 }

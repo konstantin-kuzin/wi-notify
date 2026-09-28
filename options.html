@@ -21,7 +21,7 @@
           Свои кнопки
         </button>
         <button class="options__tab" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" data-tab="ai" tabindex="-1">
-          Настройки AI
+          AI Rewrite
         </button>
       </nav>
 
@@ -329,66 +329,106 @@
 
         <section id="panel-ai" class="options__panel" role="tabpanel" aria-labelledby="tab-ai" hidden>
           <form id="ai-options-form" class="options__form">
-            <fieldset class="options__fieldset">
-              <legend class="options__fieldset-legend">Настройки AI</legend>
-          <label class="options__field">
-            <span class="options__label">AI Base URL</span>
-            <input
-              class="options__input"
-              id="ai-base-url"
-              name="aiBaseUrl"
-              type="url"
-              autocomplete="off"
-              placeholder="https://api.openai.com/v1"
-              required
-              disabled
-            >
-            <span class="options__hint">URL для OpenAI-совместимого API</span>
-          </label>
+            <fieldset class="options__fieldset" id="ai-fieldset">
+              <legend class="options__fieldset-legend options__fieldset-legend--with-toggle">
+                <label class="options__switch" title="Включить AI-кнопку">
+                  <input
+                    class="options__switch-input"
+                    id="ai-enabled"
+                    name="aiEnabled"
+                    type="checkbox"
+                    role="switch"
+                  >
+                  <span class="options__switch-track" aria-hidden="true">
+                    <span class="options__switch-thumb"></span>
+                  </span>
+                  <span class="visually-hidden">Включить AI-кнопку</span>
+                </label>
+                <span>AI Rewrite</span>
+              </legend>
 
-          <label class="options__field">
-            <span class="options__label">API Key</span>
-            <input
-              class="options__input"
-              id="ai-api-key"
-              name="aiApiKey"
-              type="password"
-              autocomplete="off"
-              placeholder="sk-…"
-              required
-            >
-            <span class="options__hint">API Key AI.AVP.RU для авторизации</span>
-          </label>
+          <p class="options__hint options__hint--fieldset" id="review-enabled-hint">
+            Добавляет в Description и в комментарии кнопку «AI Rewrite», которая переписывает текст задачи с помощью AI. Требуется OpenAI-совместимый API (например, OpenAI или AI.AVP.RU).
+          </p>
 
-          <label class="options__field">
-            <span class="options__label">AI Model</span>
-            <input
-              class="options__input"
-              id="ai-model"
-              name="aiModel"
-              type="text"
-              autocomplete="off"
-              placeholder="gpt-4o"
-              required
-            >
-            <span class="options__hint">Имя модели, например, gpt-4o.</span>
-          </label>
+          <div id="ai-options-body" class="ai-options-body">
+            <div class="options__field">
+              <span class="options__label">Провайдер AI</span>
+              <div class="ai-provider-toggle">
+                <label class="options__switch" title="Использовать встроенный провайдер AI.AVP.RU">
+                  <input
+                    class="options__switch-input"
+                    id="ai-use-fixed-provider"
+                    name="aiUseFixedProvider"
+                    type="checkbox"
+                    role="switch"
+                    checked
+                  >
+                  <span class="options__switch-track" aria-hidden="true">
+                    <span class="options__switch-thumb"></span>
+                  </span>
+                  <span class="visually-hidden">Использовать встроенный провайдер AI.AVP.RU</span>
+                </label>
+                <span class="ai-provider-toggle__text">AI.AVP.RU</span>
+              </div>
+            </div>
 
-          <label class="options__field">
-            <span class="options__label">Промпт для AI</span>
-            <textarea
-              class="options__textarea"
-              id="ai-service-prompt"
-              name="aiServicePrompt"
-              rows="20"
-              required
-            ></textarea>
-            <span class="options__hint">Системный промпт для AI.</span>
-          </label>
+            <label class="options__field">
+              <span class="options__label">AI Base URL</span>
+              <input
+                class="options__input"
+                id="ai-base-url"
+                name="aiBaseUrl"
+                type="url"
+                autocomplete="off"
+                placeholder="https://api.openai.com/v1"
+                required
+              >
+              <span class="options__hint">URL для OpenAI-совместимого API</span>
+            </label>
 
-          <div class="options__actions">
-            <button class="options__button" type="button" id="save-ai-button">Сохранить</button>
-            <span class="options__status" id="save-ai-status" role="status"></span>
+            <label class="options__field">
+              <span class="options__label">API Key</span>
+              <input
+                class="options__input"
+                id="ai-api-key"
+                name="aiApiKey"
+                type="password"
+                autocomplete="off"
+                placeholder="sk-…"
+                required
+              >
+            </label>
+
+            <label class="options__field">
+              <span class="options__label">AI Model</span>
+              <input
+                class="options__input"
+                id="ai-model"
+                name="aiModel"
+                type="text"
+                autocomplete="off"
+                placeholder="gpt-4o"
+                required
+              >
+              <span class="options__hint">Имя модели, например, gpt-4o.</span>
+            </label>
+
+            <label class="options__field">
+              <span class="options__label">Промпт для AI</span>
+              <textarea
+                class="options__textarea"
+                id="ai-service-prompt"
+                name="aiServicePrompt"
+                rows="20"
+                required
+              ></textarea>
+            </label>
+
+            <div class="options__actions">
+              <button class="options__button" type="button" id="save-ai-button">Сохранить</button>
+              <span class="options__status" id="save-ai-status" role="status"></span>
+            </div>
           </div>
 
         </fieldset>

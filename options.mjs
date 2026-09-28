@@ -8,9 +8,10 @@ import {
 import {
   AI_CONFIG_KEY,
   DEFAULT_AI_CONFIG,
-  HIDE_AI_CONNECTION_FIELDS,
-  applyHiddenAiFields,
-  loadAiConfig,
+  FIXED_AI_BASE_URL,
+  FIXED_AI_MODEL,
+  applyFixedAiProvider,
+  loadRawAiConfig,
   validateAiConfig,
 } from "./ai-config.mjs";
 const form = document.querySelector("#options-form");
@@ -41,6 +42,10 @@ const saveReviewButton = document.querySelector("#save-review-button");
 const saveReviewStatus = document.querySelector("#save-review-status");
 
 const aiForm = document.querySelector("#ai-options-form");
+const aiFieldset = document.querySelector("#ai-fieldset");
+const aiEnabledInput = document.querySelector("#ai-enabled");
+const aiOptionsBody = document.querySelector("#ai-options-body");
+const aiUseFixedProviderInput = document.querySelector("#ai-use-fixed-provider");
 const aiBaseUrlInput = document.querySelector("#ai-base-url");
 const aiApiKeyInput = document.querySelector("#ai-api-key");
 const aiModelInput = document.querySelector("#ai-model");
@@ -123,12 +128,24 @@ async function init() {
     void handleReviewSubmit();
   });
 
-  const aiConfig = await loadAiConfig();
+  const aiConfig = await loadRawAiConfig();
+  aiEnabledInput.checked = Boolean(aiConfig.enabled ?? DEFAULT_AI_CONFIG.enabled);
+  applyAiEnabledUi(aiEnabledInput.checked);
+
+  aiUseFixedProviderInput.checked = Boolean(aiConfig.useFixedProvider);
   aiBaseUrlInput.value = aiConfig.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl;
   aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
   aiModelInput.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
   aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
-  applyHiddenAiConnectionUi();
+  await applyAiProviderUi();
+
+  aiUseFixedProviderInput.addEventListener("change", () => {
+    void applyAiProviderUi();
+  });
+
+  aiEnabledInput.addEventListener("change", () => {
+    void handleAiEnabledChange();
+  });
 
   saveAiButton.addEventListener("click", () => {
     void handleAiSubmit();
@@ -154,22 +171,35 @@ async function buildConfigForApi() {
   };
 }
 
-function applyHiddenAiConnectionUi() {
-  if (!HIDE_AI_CONNECTION_FIELDS) {
-    return;
+/**
+ * Синхронизирует поля Base URL и Model с тогглом «Провайдер AI»:
+ * включён — поля скрыты, применяются фиксированные значения,
+ * выключен — поля видимы и показывают сохранённые пользовательские значения.
+ */
+async function applyAiProviderUi() {
+  const fixed = aiUseFixedProviderInput.checked;
+
+  if (fixed) {
+    aiBaseUrlInput.value = FIXED_AI_BASE_URL;
+    aiModelInput.value = FIXED_AI_MODEL;
+  } else {
+    const stored = await loadRawAiConfig();
+    aiBaseUrlInput.value = stored.baseUrl ?? "";
+    aiModelInput.value = stored.model ?? "";
   }
 
-  for (const input of [aiBaseUrlInput, aiModelInput]) {
-    input.required = false;
-    input.closest(".options__field")?.classList.add("options__field--locked");
-  }
+  aiBaseUrlInput.required = !fixed;
+  aiModelInput.required = !fixed;
+  aiBaseUrlInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
+  aiModelInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
 }
 
 async function buildAiConfigForSave() {
-  const stored = await loadAiConfig();
+  const stored = await loadRawAiConfig();
 
-  return applyHiddenAiFields({
+  return applyFixedAiProvider({
     ...stored,
+    useFixedProvider: aiUseFixedProviderInput.checked,
     baseUrl: aiBaseUrlInput.value.trim(),
     apiKey: aiApiKeyInput.value.trim(),
     model: aiModelInput.value.trim(),
@@ -294,6 +324,41 @@ async function handleReviewEnabledChange() {
     reviewEnabledInput.checked = !enabled;
     applyReviewEnabledUi(reviewEnabledInput.checked);
     setOptionsStatus(saveReviewStatus, "Ошибка сохранения: " + error.message, "err");
+  }
+}
+
+// --- AI -----------------------------------------------------------
+
+/**
+ * Сворачивает/разворачивает поля блока «AI Rewrite» по состоянию тоггла.
+ * @param {boolean} enabled
+ */
+function applyAiEnabledUi(enabled) {
+  aiFieldset.classList.toggle("options__fieldset--collapsed", !enabled);
+  aiOptionsBody.hidden = !enabled;
+  aiEnabledInput.setAttribute("aria-checked", enabled ? "true" : "false");
+}
+
+/**
+ * Тоггл сразу пишется в storage — иначе при выключении нельзя сохранить через скрытую кнопку.
+ */
+async function handleAiEnabledChange() {
+  const enabled = aiEnabledInput.checked;
+  applyAiEnabledUi(enabled);
+  setOptionsStatus(saveAiStatus, "");
+
+  try {
+    const stored = await loadRawAiConfig();
+    await chrome.storage.local.set({
+      [AI_CONFIG_KEY]: {
+        ...stored,
+        enabled,
+      },
+    });
+  } catch (error) {
+    aiEnabledInput.checked = !enabled;
+    applyAiEnabledUi(aiEnabledInput.checked);
+    setOptionsStatus(saveAiStatus, "Ошибка сохранения: " + error.message, "err");
   }
 }
 

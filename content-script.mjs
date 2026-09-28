@@ -655,6 +655,7 @@ const REVIEW_BUTTON_CONTAINER_CLASS = "wi-create-review-container";
 const REVIEW_OVERFLOW_ITEM_CLASS = "wi-create-review-overflow-item";
 const REVIEW_TOAST_CLASS = "wi-review-toast";
 const ADO_CONFIG_STORAGE_KEY = "adoConfig";
+const AI_CONFIG_STORAGE_KEY = "aiConfig";
 const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
 const CREATE_REVIEW_TASK_TIMEOUT_MS = 65000;
 const CUSTOM_OVERFLOW_ITEM_CLASS = "wi-custom-review-overflow-item";
@@ -672,6 +673,7 @@ const REVIEW_TOOLBAR_SELECTORS = [
 const REVIEW_SAVE_WATCH_TIMEOUT_MS = 10000;
 
 let reviewConfigCache = null;
+let aiConfigCache = null;
 /** true — Save в процессе: кнопку скрываем, монтируем только после окончания загрузки. */
 let reviewPausedForSave = false;
 let reviewSaveWatchStartedAt = 0;
