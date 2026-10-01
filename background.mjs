@@ -17,6 +17,8 @@ import {
   mapWorkItemToItem,
   queryAssignedWorkItemIds,
   queryAssignedWorkItemIdsForSearch,
+  listSavedWorkItemQueries,
+  querySavedWorkItemIds,
   resolveStateCategoriesByType,
   resolveWorkItemTypeIcons,
   sortWorkItemsNewestFirst,
@@ -33,6 +35,7 @@ import { chatCompletion } from "./ai-api.mjs";
 const ALARM_NAME = "refresh-work-items";
 const REFRESH_MESSAGE_TYPE = "manual-refresh";
 const SEARCH_CATALOG_MESSAGE_TYPE = "search-assigned-catalog";
+const LIST_QUERIES_MESSAGE_TYPE = "list-work-item-queries";
 const GET_STATE_OPTIONS_MESSAGE_TYPE = "get-status-options";
 const UPDATE_WORK_ITEM_STATE_MESSAGE_TYPE = "update-work-item-status";
 const ADD_TO_TIMESHEET_MESSAGE_TYPE = "add-to-timesheet";
@@ -63,6 +66,9 @@ const DEFAULT_STATE = {
   lastError: null,
   previousItemIds: [],
   currentUserDisplayName: "",
+  listSource: "assigned",
+  listQueryId: "",
+  listQueryName: "",
 };
 
 function buildRewritePrompt({ title, text, kind }) {
@@ -156,6 +162,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           error: error instanceof Error ? error.message : String(error),
         });
       });
+
+    return true;
+  }
+
+  if (message?.type === LIST_QUERIES_MESSAGE_TYPE) {
+    void (async () => {
+      try {
+        const config = await loadAdoConfig();
+        const apiRoot = typeof message.apiRoot === "string" ? message.apiRoot.trim() : "";
+        const project = typeof message.project === "string" ? message.project.trim() : "";
+        if (apiRoot) {
+          config.apiRoot = apiRoot;
+        }
+        if (project) {
+          config.project = project;
+        }
+
+        const validationErrors = validateAdoConfig({
+          ...config,
+          workItemQueryId: "",
+        });
+
+        if (validationErrors.length > 0) {
+          sendResponse({
+            ok: false,
+            error: `${validationErrors.join(" ")} Откройте настройки расширения.`,
+          });
+          return;
+        }
+
+        const queries = await listSavedWorkItemQueries(config);
+        sendResponse({
+          ok: true,
+          queries,
+          selectedId: String(config.workItemQueryId ?? "").trim(),
+          selectedName: String(config.workItemQueryName ?? "").trim(),
+        });
+      } catch (error) {
+        logAdoError("listSavedWorkItemQueries", error);
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
 
     return true;
   }
@@ -746,7 +797,10 @@ async function refreshWorkItems(trigger) {
 
   try {
     const identity = await fetchConnectionIdentity(config);
-    const ids = await queryAssignedWorkItemIds(config);
+    const queryId = String(config.workItemQueryId ?? "").trim();
+    const ids = queryId
+      ? await querySavedWorkItemIds(config, queryId)
+      : await queryAssignedWorkItemIds(config);
     const workItems = ids.length ? await fetchWorkItemsByIds(config, ids) : [];
     const stateCategoriesByType = await resolveStateCategoriesByType(
       config,
@@ -764,7 +818,7 @@ async function refreshWorkItems(trigger) {
           config,
           stateCategoriesByType,
           typeIconsByName,
-          {},
+          { includeClosed: Boolean(queryId) },
         ))
         .filter(Boolean),
     );
@@ -778,16 +832,20 @@ async function refreshWorkItems(trigger) {
       lastError: null,
       previousItemIds: items.map((item) => item.id),
       currentUserDisplayName: identity.displayName || identity.uniqueName || "",
+      listSource: queryId ? "query" : "assigned",
+      listQueryId: queryId,
+      listQueryName: queryId ? String(config.workItemQueryName ?? "").trim() : "",
     };
 
     await saveState(nextState);
     await updateBadge(nextState.count, false);
 
+    const sourceChanged = String(previousState.listQueryId ?? "") !== queryId;
     const newItems = items.filter(
       (item) => !previousState.previousItemIds?.includes(item.id),
     );
 
-    if (newItems.length > 0) {
+    if (!sourceChanged && newItems.length > 0) {
       void showNotification(newItems);
     }
 
@@ -809,7 +867,7 @@ async function refreshWorkItems(trigger) {
 }
 
 /**
- * Поиск по WIQL на сервере (Contains + id), затем детали work item — вне iteration из настроек.
+ * Поиск по WIQL на сервере (Contains + id), затем детали work item. Включает Closed.
  */
 async function fetchAssignedWorkItemsForSearchQuery(config, searchText) {
   const ids = await queryAssignedWorkItemIdsForSearch(config, searchText);

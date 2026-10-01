@@ -52,11 +52,11 @@
         </label>
 
         <label class="options__field">
-          <span class="options__label">Iteration Path</span>
-          <select class="options__input" id="iteration-path" name="iterationPath">
-            <option value="">All</option>
+          <span class="options__label">TFS Query</span>
+          <select class="options__input" id="work-item-query" name="workItemQueryId" disabled>
+            <option value="" selected>Loading</option>
           </select>
-          <span class="options__hint">Фильтер по итерациям. "All" - выбрать все итерации.</span>
+          <span class="options__hint" id="work-item-query-hint">Если TFS Query не выбран, отображаются все ваши задачи.</span>
         </label>
 
         <label class="options__field">

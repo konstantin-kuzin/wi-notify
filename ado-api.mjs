@@ -1,4 +1,5 @@
 import {
+  isWorkItemQueryId,
   normalizeApiRoot,
   parseReviewParentId,
   parseWorkItemId,
@@ -197,15 +198,6 @@ function mapStatusToMessage(status) {
   }
 
   return `Ошибка HTTP ${status}.`;
-}
-
-/** Путь из classification nodes содержит сегмент «Iteration»; в System.IterationPath его обычно нет. */
-function wiqlPathWithoutClassificationIteration(rawPath) {
-  let p = rawPath.trim().replace(/^\\+/, "");
-  while (/\\Iteration\\/i.test(p)) {
-    p = p.replace(/\\Iteration\\/i, "\\");
-  }
-  return p.replace(/\\Iteration$/i, "");
 }
 
 /**
@@ -559,10 +551,9 @@ export async function searchIdentities(config, query) {
  * Используем макрос @Me из WIQL, чтобы сервер сам сопоставил identity.
  *
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
- * @param {{ ignoreIterationPath?: boolean, includeClosed?: boolean }} [options]
+ * @param {{ includeClosed?: boolean }} [options]
  */
 export async function queryAssignedWorkItemIds(config, options = {}) {
-  const ignoreIterationPath = Boolean(options.ignoreIterationPath);
   const includeClosed = Boolean(options.includeClosed);
   const project = encodeURIComponent(config.project.trim());
 
@@ -575,12 +566,6 @@ export async function queryAssignedWorkItemIds(config, options = {}) {
 
   if (!includeClosed) {
     wiqlParts.push("  AND [System.State] <> 'Closed'");
-  }
-
-  if (!ignoreIterationPath && config.iterationPath?.trim()) {
-    const pathForWiql = wiqlPathWithoutClassificationIteration(config.iterationPath);
-    const cleanPath = pathForWiql.replace(/'/g, "''");
-    wiqlParts.push(`  AND [System.IterationPath] = '${cleanPath}'`);
   }
 
   wiqlParts.push("ORDER BY [System.ChangedDate] DESC");
@@ -606,8 +591,141 @@ export async function queryAssignedWorkItemIds(config, options = {}) {
     .filter((id) => Number.isInteger(id) && id > 0);
 }
 
+const QUERY_TREE_MAX_DEPTH = 8;
+
 /**
- * WIQL-поиск по назначенным @Me: без iteration из настроек, все состояния.
+ * Плоский список Query, которые текущий пользователь видит в проекте
+ * (My Queries и Shared Queries). Папки в список не входят.
+ *
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<Array<{ id: string, name: string, path: string, queryType: string }>>}
+ */
+export async function listSavedWorkItemQueries(config) {
+  const roots = await fetchQueryNodes(config, "");
+  const flat = [];
+  await collectSavedQueries(config, roots, flat, 0);
+
+  return flat.sort((left, right) => left.path.localeCompare(right.path, "ru"));
+}
+
+/**
+ * Выполняет сохранённый Query и возвращает id work items в порядке ответа сервера.
+ * Подходят flat, tree и one-hop: для связей берутся id source и target.
+ *
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} queryId
+ * @returns {Promise<number[]>}
+ */
+export async function querySavedWorkItemIds(config, queryId) {
+  const id = String(queryId ?? "").trim();
+
+  if (!isWorkItemQueryId(id)) {
+    throw new Error("Некорректный идентификатор Query.");
+  }
+
+  const project = encodeURIComponent(config.project.trim());
+  const query = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+  const data = await adoFetch(
+    config,
+    `${project}/_apis/wit/wiql/${encodeURIComponent(id)}?${query.toString()}`,
+  );
+
+  return extractSavedQueryWorkItemIds(data);
+}
+
+/**
+ * @param {unknown} data
+ * @returns {number[]}
+ */
+export function extractSavedQueryWorkItemIds(data) {
+  const ids = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) {
+      return;
+    }
+    seen.add(id);
+    ids.push(id);
+  };
+
+  const payload = data && typeof data === "object" ? data : {};
+  const workItems = Array.isArray(payload.workItems) ? payload.workItems : [];
+  for (const item of workItems) {
+    push(item?.id);
+  }
+
+  const relations = Array.isArray(payload.workItemRelations) ? payload.workItemRelations : [];
+  for (const relation of relations) {
+    push(relation?.target?.id);
+    push(relation?.source?.id);
+  }
+
+  return ids;
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} queryId пусто — корень Queries проекта
+ */
+async function fetchQueryNodes(config, queryId) {
+  const project = encodeURIComponent(config.project.trim());
+  const params = new URLSearchParams({
+    "api-version": resolveApiVersion(config),
+  });
+  const id = String(queryId ?? "").trim();
+  const pathAndQuery = id
+    ? `${project}/_apis/wit/queries/${encodeURIComponent(id)}?$depth=2&${params.toString()}`
+    : `${project}/_apis/wit/queries?$depth=2&${params.toString()}`;
+  const data = await adoFetch(config, pathAndQuery);
+
+  if (id) {
+    return Array.isArray(data?.children) ? data.children : [];
+  }
+
+  return Array.isArray(data?.value) ? data.value : [];
+}
+
+/**
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {unknown[]} nodes
+ * @param {Array<{ id: string, name: string, path: string, queryType: string }>} out
+ * @param {number} depth
+ */
+async function collectSavedQueries(config, nodes, out, depth) {
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    if (!node || node.isDeleted) {
+      continue;
+    }
+
+    if (node.isFolder) {
+      let children = Array.isArray(node.children) ? node.children : [];
+      if (node.hasChildren && !children.length && node.id && depth < QUERY_TREE_MAX_DEPTH) {
+        children = await fetchQueryNodes(config, String(node.id));
+      }
+      await collectSavedQueries(config, children, out, depth + 1);
+      continue;
+    }
+
+    const id = normalizeText(node.id);
+    const name = normalizeText(node.name);
+    if (!id || !name) {
+      continue;
+    }
+
+    out.push({
+      id,
+      name,
+      path: normalizeText(node.path) || name,
+      queryType: normalizeText(node.queryType).toLowerCase(),
+    });
+  }
+}
+
+/**
+ * WIQL-поиск по назначенным @Me: все состояния, включая Closed.
  * Использует оператор Contains на сервере — находит work items вне «текущей выборки» в UI.
  *
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config

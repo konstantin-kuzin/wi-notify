@@ -18,7 +18,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 ### В popup
 
-- Список WI с `System.AssignedTo = @Me` (через WIQL).
+- Список WI: по умолчанию `System.AssignedTo = @Me` (через WIQL). Если в настройках выбран Query проекта — список строится из этого сохранённого запроса.
 - Фильтры по категории состояния: `All`, `Active`, `Proposed`, `Resolved`.
 - Badge на иконке расширения со счётчиком.
 - Автообновление по alarm и ручное обновление.
@@ -47,7 +47,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
      - on-prem: `https://<хост>/tfs/<коллекция>`;
      - облако: `https://dev.azure.com/<организация>`.
    - **Проект** (`#project`) — имя Team Project.
-   - **Iteration Path** (`#iteration-path`) — фильтр основного списка; `All` (пустое значение) = без фильтра итерации.
+   - **Query** (`#work-item-query`) — сохранённый запрос проекта. «Все мои задачи» — список по назначению на текущего пользователя.
    - **Период обновления** (`#refresh-interval-minutes`) — минуты, целое ≥ 1; по умолчанию `10`.
 4. Нажать **Сохранить**. Конфиг пишется в `chrome.storage.local` под ключом `adoConfig`. Background получает `chrome.storage.onChanged`, пересоздаёт alarm и обновляет список WI.
 5. (Опционально) В блоке **Задача на ревью** задать название продукта и дизайн-лида, нажать **Сохранить**.
@@ -92,7 +92,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 Хранится в `chrome.storage.local`, ключ **`adoConfig`**.  
 Загрузка и нормализация — `loadAdoConfig()` в [`ado-config.mjs`](../ado-config.mjs): merge `DEFAULT_ADO_CONFIG` + storage, принудительные перезаписи, затем запись полного объекта обратно в storage.
 
-Устаревшие поля при загрузке удаляются: `repositoryId`, `selectedGroupIds`, `selectedGroupLabels`.
+Устаревшие поля при загрузке удаляются: `repositoryId`, `selectedGroupIds`, `selectedGroupLabels`, `iterationPath`.
 
 ### Поля модели
 
@@ -100,7 +100,8 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 |------|---------|---------------|------|
 | `apiRoot` | `https://hqrndtfs.avp.ru/tfs/DefaultCollection` | Да | Базовый URL коллекции/организации |
 | `project` | `Monorepo` | Да | Имя Team Project |
-| `iterationPath` | `""` | Да (select, «All») | Фильтр итерации основного списка; пусто = без фильтра |
+| `workItemQueryId` | `""` | Да (select Query) | GUID сохранённого Query проекта. Пусто — все задачи текущего пользователя |
+| `workItemQueryName` | `""` | Да (подпись выбранного Query) | Имя Query для селекта, пока список ещё не загружен |
 | `refreshIntervalMinutes` | `10` | Да | Интервал alarm в минутах |
 | `apiVersion` | `6.0-preview` | Нет | При каждом `loadAdoConfig` **принудительно** ставится `6.0-preview` |
 | `authMode` | `session` | Нет | `session` — cookies браузера; `pat` — Basic с PAT |
@@ -131,7 +132,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 ### Валидация
 
-- `validateAdoConfig` — непустые `apiRoot` и `project`; `refreshIntervalMinutes` — целое ≥ 1.
+- `validateAdoConfig` — непустые `apiRoot` и `project`; `refreshIntervalMinutes` — целое ≥ 1; если `workItemQueryId` задан — это GUID.
 - `validateReviewConfig` — непустые `reviewProject`, `reviewTemplateTeam`, `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
 
 ---
@@ -144,14 +145,15 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 
 1. Загрузка `adoConfig`, проверка `validateAdoConfig`.
 2. `fetchConnectionIdentity` — `GET /_apis/connectionData` → текущий пользователь.
-3. `queryAssignedWorkItemIds` — WIQL `POST {project}/_apis/wit/wiql`:
-   - `System.TeamProject` = проект из конфига;
-   - `System.AssignedTo = @Me`;
-   - `System.State <> 'Closed'` (для основного списка);
-   - если `iterationPath` не пуст — фильтр по `System.IterationPath`;
-   - `ORDER BY [System.ChangedDate] DESC`.
+3. Источник id:
+   - если `workItemQueryId` пуст — `queryAssignedWorkItemIds`, WIQL `POST {project}/_apis/wit/wiql`:
+     - `System.TeamProject` = проект из конфига;
+     - `System.AssignedTo = @Me`;
+     - `System.State <> 'Closed'` (для основного списка);
+     - `ORDER BY [System.ChangedDate] DESC`;
+   - если `workItemQueryId` задан — `querySavedWorkItemIds`, `GET {project}/_apis/wit/wiql/{id}`. Берутся id из `workItems`, а для tree/one-hop ещё из `workItemRelations`. Фильтр Closed не добавляется: результат Query используется как есть.
 4. `fetchWorkItemsByIds` — batch по 200: `POST {project}/_apis/wit/workitemsbatch`.
-5. `mapWorkItemToItem` — маппинг в элемент UI; дополнительно отбрасывает `stateCategory === "closed"` (если не режим поиска).
+5. `mapWorkItemToItem` — маппинг в элемент UI; дополнительно отбрасывает `stateCategory === "closed"` (если не режим поиска и не выбран Query).
 6. Сортировка `sortWorkItemsNewestFirst` по `updatedAt`.
 7. Сохранение в `wiState`, обновление badge, уведомления о новых id.
 
@@ -169,6 +171,9 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `lastError` | Текст ошибки или `null` |
 | `previousItemIds` | Id прошлого успешного списка — для детекта новых WI |
 | `currentUserDisplayName` | Отображаемое имя текущего пользователя |
+| `listSource` | `assigned` или `query` — откуда собран список |
+| `listQueryId` | GUID Query последнего успешного обновления; пусто, если список по `@Me` |
+| `listQueryName` | Имя выбранного Query |
 
 ### Badge
 
@@ -225,7 +230,6 @@ Background читает `manifest.json` с GitHub raw URL репозитория
 1. Пользователь вводит текст и нажимает **Enter** (только Enter запускает поиск).
 2. Popup → background: `search-assigned-catalog` с `query`.
 3. Background: `queryAssignedWorkItemIdsForSearch` — WIQL по `@Me`:
-   - **без** фильтра `IterationPath`;
    - **без** исключения Closed;
    - `Contains` по `System.Title` и `System.Description`;
    - если query — число (опционально с `#`) — `OR [System.Id] = N`;

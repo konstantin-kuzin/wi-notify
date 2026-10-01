@@ -10,6 +10,7 @@ import {
   DEFAULT_AI_CONFIG,
   FIXED_AI_BASE_URL,
   FIXED_AI_MODEL,
+  SHOW_AI_SERVICE_PROMPT,
   applyFixedAiProvider,
   loadRawAiConfig,
   validateAiConfig,
@@ -18,7 +19,8 @@ import { fetchAiModels } from "./ai-api.mjs";
 const form = document.querySelector("#options-form");
 const apiRootInput = document.querySelector("#api-root");
 const projectInput = document.querySelector("#project");
-const iterationPathSelect = document.querySelector("#iteration-path");
+const workItemQuerySelect = document.querySelector("#work-item-query");
+const workItemQueryHint = document.querySelector("#work-item-query-hint");
 const refreshIntervalMinutesInput = document.querySelector("#refresh-interval-minutes");
 const saveButton = document.querySelector("#save-button");
 const saveStatus = document.querySelector("#save-status");
@@ -57,19 +59,58 @@ const saveAiStatus = document.querySelector("#save-ai-status");
 
 /** Кэш последнего успешно загруженного списка моделей провайдера. */
 let aiModelsCache = null;
+const LIST_QUERIES_MESSAGE_TYPE = "list-work-item-queries";
+const WORK_ITEM_QUERY_HINT = "Если Query не выбран, в\u00A0popup попадают все ваши задачи. Выбранный Query заменяет эту выборку.";
+let queryReloadTimer = null;
+/** Проект, для которого список Query уже успешно загружался. */
+let queriesLoadedForProject = "";
+/** Выбор, который нужно сохранить, пока в селекте показан Loading. */
+let querySelectionPending = null;
+let queryFetchToken = 0;
+
+/** Таймеры скрытия успешного статуса, чтобы повторное сообщение их отменяло. */
+const statusFadeState = new WeakMap();
 
 /**
  * Единый статус сохранения рядом с кнопкой.
+ * Успешное сообщение держится 4 с и гаснет за 1 с.
  * @param {HTMLElement | null} el
  * @param {string} message
  * @param {"ok" | "err" | ""} [kind]
  */
 function setOptionsStatus(el, message, kind = "") {
   if (!el) return;
+
+  const prev = statusFadeState.get(el);
+  if (prev) {
+    clearTimeout(prev.fadeTimer);
+    clearTimeout(prev.clearTimer);
+    statusFadeState.delete(el);
+  }
+
+  el.style.transition = "none";
+  el.classList.remove("options__status--fade", "options__status--ok", "options__status--err");
   el.textContent = message;
-  el.classList.remove("options__status--ok", "options__status--err");
   if (kind === "ok") el.classList.add("options__status--ok");
   if (kind === "err") el.classList.add("options__status--err");
+  void el.offsetWidth;
+  el.style.transition = "";
+
+  if (kind !== "ok" || !message) return;
+
+  const token = {};
+  const fadeTimer = setTimeout(() => {
+    if (statusFadeState.get(el)?.token !== token) return;
+    el.classList.add("options__status--fade");
+    const clearTimer = setTimeout(() => {
+      if (statusFadeState.get(el)?.token !== token) return;
+      el.textContent = "";
+      el.classList.remove("options__status--ok", "options__status--err", "options__status--fade");
+      statusFadeState.delete(el);
+    }, 1000);
+    statusFadeState.set(el, { token, fadeTimer, clearTimer });
+  }, 4000);
+  statusFadeState.set(el, { token, fadeTimer, clearTimer: 0 });
 }
 
 void init();
@@ -94,16 +135,16 @@ async function init() {
   apiRootInput.addEventListener("input", () => {
     invalidateWiTypesCache();
     invalidateProjectTagsCache();
-    void fetchAndPopulateIterations();
+    scheduleQueryReload();
   });
 
   projectInput.addEventListener("input", () => {
     invalidateWiTypesCache();
     invalidateProjectTagsCache();
-    void fetchAndPopulateIterations();
+    scheduleQueryReload();
   });
 
-  // Ревью и AI заполняем сразу из storage — не ждём медленный запрос итераций.
+  // Ревью и AI заполняем сразу из storage.
   reviewProductNameInput.value = config.reviewProductName ?? DEFAULT_ADO_CONFIG.reviewProductName;
   reviewDesignLeadValueInput.value = config.reviewDesignLead ?? DEFAULT_ADO_CONFIG.reviewDesignLead;
   reviewDesignLeadNameInput.value = config.reviewDesignLeadName ?? DEFAULT_ADO_CONFIG.reviewDesignLeadName;
@@ -142,6 +183,7 @@ async function init() {
   aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
   aiModelSelect.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
   aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
+  applyAiServicePromptVisibility();
   await applyAiProviderUi();
 
   aiUseFixedProviderInput.addEventListener("change", () => {
@@ -175,7 +217,10 @@ async function init() {
     void handleAiSubmit();
   });
 
-  void fetchAndPopulateIterations(config.iterationPath ?? "");
+  void fetchAndPopulateQueries(
+    config.workItemQueryId ?? "",
+    config.workItemQueryName ?? "",
+  );
 }
 
 async function buildConfigForApi() {
@@ -185,7 +230,8 @@ async function buildConfigForApi() {
     ...stored,
     apiRoot: apiRootInput.value.trim(),
     project: projectInput.value.trim(),
-    iterationPath: iterationPathSelect.value.trim(),
+    workItemQueryId: readWorkItemQuerySelection().id,
+    workItemQueryName: readWorkItemQuerySelection().name,
     refreshIntervalMinutes: getRefreshIntervalMinutesValue(),
   };
 }
@@ -294,6 +340,16 @@ async function applyAiProviderUi() {
   aiModelSelect.closest(".options__field")?.toggleAttribute("hidden", fixed);
 }
 
+/**
+ * Скрывает поле промпта, не очищая его: значение остаётся в форме и сохраняется.
+ */
+function applyAiServicePromptVisibility() {
+  const field = aiServicePromptTextarea.closest(".options__field");
+  const visible = SHOW_AI_SERVICE_PROMPT;
+  field?.toggleAttribute("hidden", !visible);
+  aiServicePromptTextarea.required = visible;
+}
+
 async function buildAiConfigForSave() {
   const stored = await loadRawAiConfig();
 
@@ -308,49 +364,63 @@ async function buildAiConfigForSave() {
 }
 
 async function handleSubmit() {
+  if (saveButton.disabled) {
+    return;
+  }
+
+  saveButton.disabled = true;
   setOptionsStatus(saveStatus, "");
 
-  const stored = await loadAdoConfig();
-  const merged = {
-    ...stored,
-    apiRoot: apiRootInput.value.trim(),
-    project: projectInput.value.trim(),
-    iterationPath: iterationPathSelect.value.trim(),
-    refreshIntervalMinutes: getRefreshIntervalMinutesValue(),
-  };
-
-  const errors = validateAdoConfig(merged);
-
-  if (errors.length > 0) {
-    setOptionsStatus(saveStatus, errors.join(" "), "err");
-    return;
-  }
-
   try {
-    await chrome.storage.local.set({
-      [ADO_CONFIG_KEY]: merged,
-    });
-    console.log('Config saved successfully:', merged);
-  } catch (error) {
-    console.error('Failed to save config:', error);
-    setOptionsStatus(saveStatus, "Ошибка сохранения: " + error.message, "err");
-    return;
+    const stored = await loadAdoConfig();
+    const merged = {
+      ...stored,
+      apiRoot: apiRootInput.value.trim(),
+      project: projectInput.value.trim(),
+      workItemQueryId: readWorkItemQuerySelection().id,
+      workItemQueryName: readWorkItemQuerySelection().name,
+      refreshIntervalMinutes: getRefreshIntervalMinutesValue(),
+    };
+
+    const errors = validateAdoConfig(merged);
+
+    if (errors.length > 0) {
+      setOptionsStatus(saveStatus, errors.join(" "), "err");
+      return;
+    }
+
+    try {
+      await chrome.storage.local.set({
+        [ADO_CONFIG_KEY]: merged,
+      });
+      console.log('Config saved successfully:', merged);
+    } catch (error) {
+      console.error('Failed to save config:', error);
+      setOptionsStatus(saveStatus, "Ошибка сохранения: " + error.message, "err");
+      return;
+    }
+
+    await requestDevAzureHostPermissionIfNeeded(merged.apiRoot);
+
+    // Reload the config to verify it's saved and update form values
+    const savedConfig = await loadAdoConfig();
+    console.log('Loaded config after save:', savedConfig);
+    apiRootInput.value = savedConfig.apiRoot;
+    projectInput.value = savedConfig.project;
+    refreshIntervalMinutesInput.value = String(savedConfig.refreshIntervalMinutes);
+    await fetchAndPopulateQueries(
+      savedConfig.workItemQueryId ?? "",
+      savedConfig.workItemQueryName ?? "",
+      { preserveSelection: true },
+    );
+    console.log('Form values set to:', apiRootInput.value, projectInput.value, workItemQuerySelect?.value);
+
+    await refreshCustomButtonTypeFields();
+
+    setOptionsStatus(saveStatus, "Благополучно сохранено", "ok");
+  } finally {
+    saveButton.disabled = false;
   }
-
-  await requestDevAzureHostPermissionIfNeeded(merged.apiRoot);
-
-  // Reload the config to verify it's saved and update form values
-  const savedConfig = await loadAdoConfig();
-  console.log('Loaded config after save:', savedConfig);
-  apiRootInput.value = savedConfig.apiRoot;
-  projectInput.value = savedConfig.project;
-  refreshIntervalMinutesInput.value = String(savedConfig.refreshIntervalMinutes);
-  await fetchAndPopulateIterations(savedConfig.iterationPath ?? "");
-  console.log('Form values set to:', apiRootInput.value, projectInput.value, iterationPathSelect.value);
-
-  await refreshCustomButtonTypeFields();
-
-  setOptionsStatus(saveStatus, "Сохранено. Список work items обновится автоматически.", "ok");
 }
 
 async function handleReviewSubmit() {
@@ -390,7 +460,7 @@ async function handleReviewSubmit() {
     return;
   }
 
-  setOptionsStatus(saveReviewStatus, "Настройки задачи на ревью сохранены.", "ok");
+  setOptionsStatus(saveReviewStatus, "Благополучно сохранено", "ok");
 }
 
 /**
@@ -683,7 +753,7 @@ async function handleAiSubmit() {
     return;
   }
 
-  setOptionsStatus(saveAiStatus, "Настройки сохранены", "ok");
+  setOptionsStatus(saveAiStatus, "Благополучно сохранено", "ok");
 }
 
 async function requestDevAzureHostPermissionIfNeeded(apiRoot) {
@@ -736,66 +806,204 @@ async function requestAiHostPermissionIfNeeded(baseUrl) {
   }
 }
 
-/**
- * @param {string} [preferredPath] — значение из storage; если не передано, сохраняем текущий выбор в select до перерисовки.
- */
-async function fetchAndPopulateIterations(preferredPath) {
-  const apiRoot = apiRootInput.value.trim();
-  const project = projectInput.value.trim();
+function scheduleQueryReload() {
+  clearTimeout(queryReloadTimer);
+  queryReloadTimer = setTimeout(() => {
+    void fetchAndPopulateQueries();
+  }, 400);
+}
 
-  const previousSelection =
-    typeof preferredPath === "string"
-      ? preferredPath.trim()
-      : iterationPathSelect.value.trim();
+function readSelectedQueryName() {
+  const id = workItemQuerySelect?.value.trim() ?? "";
+  if (!id) {
+    return "";
+  }
 
-  if (!apiRoot || !project) {
-    iterationPathSelect.innerHTML = '<option value="">All</option>';
+  const option = workItemQuerySelect?.selectedOptions?.[0];
+  return String(option?.dataset.name || option?.textContent || "").trim();
+}
+
+function readWorkItemQuerySelection() {
+  if (querySelectionPending) {
+    return {
+      id: String(querySelectionPending.id ?? "").trim(),
+      name: String(querySelectionPending.name ?? "").trim(),
+    };
+  }
+
+  const id = workItemQuerySelect?.value.trim() ?? "";
+  return {
+    id,
+    name: id ? readSelectedQueryName() : "",
+  };
+}
+
+function showQueryLoading() {
+  if (!workItemQuerySelect) {
     return;
   }
 
+  workItemQuerySelect.disabled = true;
+  workItemQuerySelect.innerHTML = "";
+  const loading = document.createElement("option");
+  loading.value = "";
+  loading.textContent = "Loading";
+  loading.selected = true;
+  workItemQuerySelect.appendChild(loading);
+}
+
+/**
+ * @param {string} [preferredId]
+ * @param {string} [preferredName]
+ * @param {{ preserveSelection?: boolean }} [options]
+ */
+async function fetchAndPopulateQueries(preferredId, preferredName, options = {}) {
+  if (!workItemQuerySelect) {
+    return;
+  }
+
+  const preserveSelection = Boolean(options.preserveSelection);
+  const apiRoot = apiRootInput.value.trim();
+  const project = projectInput.value.trim();
+  const pendingSelection = querySelectionPending;
+  const previousId = typeof preferredId === "string"
+    ? preferredId.trim()
+    : (pendingSelection?.id || workItemQuerySelect.value).trim();
+  const previousName = typeof preferredName === "string"
+    ? preferredName.trim()
+    : (pendingSelection?.name || readSelectedQueryName());
+  const projectChanged = Boolean(queriesLoadedForProject)
+    && queriesLoadedForProject !== project;
+  const token = ++queryFetchToken;
+
+  if (!apiRoot || !project) {
+    querySelectionPending = null;
+    resetWorkItemQuerySelect();
+    workItemQuerySelect.disabled = false;
+    if (workItemQueryHint) {
+      workItemQueryHint.textContent = WORK_ITEM_QUERY_HINT;
+    }
+    return;
+  }
+
+  if (!preserveSelection) {
+    querySelectionPending = !projectChanged && previousId
+      ? { id: previousId, name: previousName }
+      : null;
+    showQueryLoading();
+  } else {
+    workItemQuerySelect.disabled = false;
+  }
+
   try {
-    const url = `${apiRoot}/${project}/_apis/wit/classificationnodes/iterations?api-version=6.0-preview&$depth=10`;
-    const response = await fetch(url);
+    const response = await chrome.runtime.sendMessage({
+      type: LIST_QUERIES_MESSAGE_TYPE,
+      apiRoot,
+      project,
+    });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    if (token !== queryFetchToken) {
+      return;
     }
 
-    const data = await response.json();
-    console.log("[ado API options]", url, data);
-    const iterations = flattenIterations(data.children || []);
-    const paths = new Set(iterations.map((iter) => iter.path));
-
-    iterationPathSelect.innerHTML = '<option value="">All</option>';
-    for (const iter of iterations) {
-      const opt = document.createElement("option");
-      opt.value = iter.path;
-      opt.textContent = iter.name;
-      iterationPathSelect.appendChild(opt);
+    if (!response?.ok) {
+      throw new Error(response?.error || "Не удалось загрузить список Query.");
     }
 
-    if (previousSelection && !paths.has(previousSelection)) {
-      const opt = document.createElement("option");
-      opt.value = previousSelection;
-      opt.textContent = previousSelection;
-      iterationPathSelect.appendChild(opt);
+    const queries = Array.isArray(response.queries) ? response.queries : [];
+    const groups = new Map();
+
+    for (const query of queries) {
+      const id = String(query?.id ?? "").trim();
+      const name = String(query?.name ?? "").trim();
+      if (!id || !name) {
+        continue;
+      }
+
+      const { root, label } = splitQueryPath(query?.path, name);
+      if (!groups.has(root)) {
+        groups.set(root, []);
+      }
+      groups.get(root).push({ id, name, label });
     }
 
-    iterationPathSelect.value = previousSelection || "";
+    resetWorkItemQuerySelect();
+
+    for (const [root, items] of groups) {
+      const group = document.createElement("optgroup");
+      group.label = root;
+      for (const item of items) {
+        group.appendChild(createQueryOption(item.id, item.label, item.name));
+      }
+      workItemQuerySelect.appendChild(group);
+    }
+
+    const known = queries.some((query) => String(query?.id ?? "").trim() === previousId);
+    if (previousId && !known && !projectChanged) {
+      workItemQuerySelect.appendChild(
+        createQueryOption(previousId, previousName || previousId, previousName || previousId),
+      );
+    }
+
+    workItemQuerySelect.value = previousId && (known || !projectChanged) ? previousId : "";
+    querySelectionPending = null;
+    queriesLoadedForProject = project;
+    if (workItemQueryHint) {
+      workItemQueryHint.textContent = WORK_ITEM_QUERY_HINT;
+    }
   } catch (error) {
-    console.error('Failed to fetch iterations:', error);
-    iterationPathSelect.innerHTML = '<option value="">All</option>';
+    if (token !== queryFetchToken) {
+      return;
+    }
+
+    console.error("Failed to fetch queries:", error);
+    if (!preserveSelection) {
+      resetWorkItemQuerySelect();
+      if (previousId && !projectChanged) {
+        workItemQuerySelect.appendChild(
+          createQueryOption(previousId, previousName || previousId, previousName || previousId),
+        );
+        workItemQuerySelect.value = previousId;
+      }
+    }
+    querySelectionPending = null;
+    if (workItemQueryHint) {
+      const detail = error instanceof Error ? error.message : String(error);
+      workItemQueryHint.textContent = `Не удалось загрузить список Query. ${detail}`;
+    }
+  } finally {
+    if (token === queryFetchToken) {
+      workItemQuerySelect.disabled = false;
+    }
   }
 }
 
-function flattenIterations(nodes, result = []) {
-  for (const node of nodes) {
-    result.push({ name: node.name, path: node.path });
-    if (node.children) {
-      flattenIterations(node.children, result);
-    }
-  }
-  return result;
+function resetWorkItemQuerySelect() {
+  workItemQuerySelect.innerHTML = "";
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Все мои задачи";
+  workItemQuerySelect.appendChild(empty);
+}
+
+function createQueryOption(id, label, name) {
+  const option = document.createElement("option");
+  option.value = id;
+  option.textContent = label;
+  option.dataset.name = name;
+  return option;
+}
+
+function splitQueryPath(path, name) {
+  const parts = String(path || name)
+    .split(/[\\/]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const leaf = parts.length ? parts[parts.length - 1] : name;
+  const root = parts.length > 1 ? parts[0] : "Queries";
+  const middle = parts.slice(1, -1);
+  const label = middle.length ? `${middle.join(" / ")} / ${leaf}` : leaf;
+  return { root, label };
 }
 
 function getRefreshIntervalMinutesValue() {
@@ -1324,8 +1532,7 @@ async function buildCard(config = null) {
       const idx = buttons.findIndex((b) => b.id === cfg.id);
       if (idx >= 0) buttons[idx] = cfg; else buttons.push(cfg);
       await saveCustomButtons(buttons);
-      setOptionsStatus(status, "Сохранено.", "ok");
-      setTimeout(() => { setOptionsStatus(status, ""); }, 2000);
+      setOptionsStatus(status, "Благополучно сохранено", "ok");
     } catch (error) {
       setOptionsStatus(
         status,

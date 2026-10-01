@@ -4,7 +4,13 @@ export const ADO_CONFIG_KEY = "adoConfig";
 export const DEFAULT_ADO_CONFIG = {
   apiRoot: "https://hqrndtfs.avp.ru/tfs/DefaultCollection",
   project: "Monorepo",
-  iterationPath: "",
+  /**
+   * Сохранённый Query проекта (`_apis/wit/queries`). Пусто — список всех задач
+   * текущего пользователя (`System.AssignedTo = @Me`).
+   */
+  workItemQueryId: "",
+  /** Имя выбранного Query для подписи в popup, пока список запросов ещё не загружен. */
+  workItemQueryName: "",
   refreshIntervalMinutes: 10,
   /**
    * Версия REST API (`api-version` в запросах). На странице настроек не показывается —
@@ -84,6 +90,7 @@ export async function loadAdoConfig() {
   delete raw.repositoryId;
   delete raw.selectedGroupIds;
   delete raw.selectedGroupLabels;
+  delete raw.iterationPath;
 
   // Save back to storage to persist the corrected config
   await chrome.storage.local.set({ [ADO_CONFIG_KEY]: raw });
@@ -111,7 +118,19 @@ export function validateAdoConfig(config) {
     errors.push("Укажите период обновления в минутах целым числом не меньше 1.");
   }
 
+  const queryId = String(config.workItemQueryId ?? "").trim();
+  if (queryId && !isWorkItemQueryId(queryId)) {
+    errors.push("Некорректный идентификатор Query.");
+  }
+
   return errors;
+}
+
+/** GUID сохранённого Query Azure DevOps. */
+export function isWorkItemQueryId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    String(value ?? "").trim(),
+  );
 }
 
 /**

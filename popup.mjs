@@ -53,6 +53,9 @@ const WORK_ITEM_TYPE_ICONS = {
 };
 
 let isRefreshing = false;
+let transientMessage = "";
+let transientMessageTone = "error";
+let transientMessageTimer = null;
 let currentFilter = DEFAULT_FILTER;
 let currentState = { ...DEFAULT_STATE };
 let updateState = { hasUpdate: false, latestVersion: "" };
@@ -61,7 +64,7 @@ let isSearchMode = false;
 /** Последний выполненный запрос (для повторного применения при обновлении данных). */
 let lastSearchQuery = "";
 let searchResultItems = [];
-/** Элементы каталога с Azure DevOps (все назначенные @Me, без iteration из настроек). */
+/** Элементы каталога с Azure DevOps: все назначенные @Me, включая Closed. */
 let searchBackendItems = [];
 let isSearchLoading = false;
 let searchFetchError = "";
@@ -282,6 +285,7 @@ function render() {
   lastUpdated.textContent = formatTimestamp(currentState.lastCheckedAt);
 
   refreshButton.disabled = isRefreshing;
+  refreshButton.classList.toggle("popup__refresh--busy", isRefreshing);
   refreshButton.setAttribute(
     "aria-label",
     isRefreshing ? "Обновление выполняется" : "Обновить сейчас",
@@ -291,10 +295,18 @@ function render() {
     isRefreshing ? "Обновление выполняется" : "Обновить сейчас",
   );
 
-  if (currentState.lastError) {
-    messageBox.textContent = `Последняя проверка завершилась ошибкой: ${currentState.lastError}`;
-    messageBox.classList.add("popup__message--error");
-    messageBox.classList.remove("popup__message--success");
+  const hasTransientMessage = Boolean(transientMessage);
+  const message = transientMessage || (
+    currentState.lastError
+      ? `Последняя проверка завершилась ошибкой: ${currentState.lastError}`
+      : ""
+  );
+  const messageTone = hasTransientMessage ? transientMessageTone : "error";
+
+  if (message) {
+    messageBox.textContent = message;
+    messageBox.classList.toggle("popup__message--error", messageTone !== "success");
+    messageBox.classList.toggle("popup__message--success", messageTone === "success");
     messageBox.classList.remove("hidden");
   } else {
     messageBox.textContent = "";
@@ -409,7 +421,9 @@ function getEmptyStateMessage() {
   }
 
   if (currentFilter === "all") {
-    return "Нет активных work items";
+    return currentState.listSource === "query"
+      ? "В запросе нет задач"
+      : "Нет активных work items";
   }
 
   return `Нет work items в категории ${currentFilter}`;
@@ -611,11 +625,22 @@ function getDisplayStateName(stateCategory) {
 }
 
 async function refreshNow() {
+  return refreshState({
+    clearTransientMessage: true,
+    errorPrefix: "Ручное обновление завершилось ошибкой",
+  });
+}
+
+async function refreshState({ clearTransientMessage, errorPrefix }) {
   if (isRefreshing) {
-    return;
+    return false;
   }
 
   isRefreshing = true;
+  if (clearTransientMessage) {
+    transientMessage = "";
+    transientMessageTone = "error";
+  }
   render();
 
   try {
@@ -628,6 +653,14 @@ async function refreshNow() {
         response?.error || "Не удалось выполнить ручное обновление.",
       );
     }
+
+    return true;
+  } catch (error) {
+    showTransientMessage(
+      `${errorPrefix}: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+    return false;
   } finally {
     isRefreshing = false;
     currentState = await loadState();
@@ -637,6 +670,27 @@ async function refreshNow() {
       render();
     }
   }
+}
+
+function showTransientMessage(message, tone = "error", autoHideMs = 0) {
+  transientMessage = String(message ?? "");
+  transientMessageTone = tone === "success" ? "success" : "error";
+
+  if (transientMessageTimer) {
+    clearTimeout(transientMessageTimer);
+    transientMessageTimer = null;
+  }
+
+  if (autoHideMs > 0) {
+    transientMessageTimer = setTimeout(() => {
+      transientMessage = "";
+      transientMessageTone = "error";
+      transientMessageTimer = null;
+      render();
+    }, autoHideMs);
+  }
+
+  render();
 }
 
 function createGroupElement(group) {

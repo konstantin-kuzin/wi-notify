@@ -3,6 +3,7 @@ export const AI_CONFIG_KEY = "aiConfig";
 /** Фиксированные настройки встроенного провайдера AI.AVP.RU. */
 export const FIXED_AI_BASE_URL = "https://llm.kaspersky-labs.com/v1/";
 export const FIXED_AI_MODEL = "best-for-chat";
+export const SHOW_AI_SERVICE_PROMPT = false;
 
 /** Базовые настройки подключения к OpenAI-совместимому API. */
 export const DEFAULT_AI_CONFIG = {

@@ -236,6 +236,12 @@ select.options__input {
   filter: brightness(1.05);
 }
 
+.options__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  filter: none;
+}
+
 .options__text-link {
   display: inline-block;
   padding: 8px 0;
@@ -593,6 +599,12 @@ select.options__input {
   line-height: 1.35;
   color: var(--muted);
   min-height: 1.35em;
+  opacity: 1;
+  transition: opacity 1s ease;
+}
+
+.options__status--fade {
+  opacity: 0;
 }
 
 .options__status--ok {
