@@ -17,6 +17,32 @@ function buildChatCompletionsUrl(baseUrl) {
   return `${normalizedBaseUrl}/chat/completions`;
 }
 
+/**
+ * Превращает тело ошибки провайдера в короткое сообщение.
+ * Страницу блокировки Cloudflare не показывает целиком.
+ * @param {number} status
+ * @param {string} body
+ */
+function formatAiProviderError(status, body) {
+  const text = String(body ?? "").trim();
+  const isHtml = /<!DOCTYPE html|<html[\s>]|Attention Required! \| Cloudflare/i.test(text);
+
+  if (isHtml && /cloudflare|sorry, you have been blocked|cf-error-details/i.test(text)) {
+    const rayId = text.match(/Cloudflare Ray ID:\s*(?:<strong[^>]*>)?([A-Za-z0-9]+)/i)?.[1];
+    const blockedHost = text.match(/unable to access<\/span>\s*([^<]+)/i)?.[1]?.trim();
+    const hostPart = blockedHost ? ` (${blockedHost})` : "";
+    const rayPart = rayId ? ` Ray ID: ${rayId}.` : "";
+    return `Cloudflare заблокировал запрос к провайдеру${hostPart}: HTTP ${status}.${rayPart} Это ограничение WAF или сети, а не ошибка API-ключа.`;
+  }
+
+  if (isHtml) {
+    return `Провайдер вернул HTML вместо ответа API (HTTP ${status}).`;
+  }
+
+  const compact = text.replace(/\s+/g, " ").slice(0, 300);
+  return compact ? `AI API error: ${status} - ${compact}` : `AI API error: ${status}`;
+}
+
 async function ensureAiHostPermission(baseUrl) {
   const origins = [buildOriginPattern(baseUrl)];
   const hasPermission = await chrome.permissions.contains({ origins });
@@ -84,8 +110,11 @@ export async function fetchAiModels(baseUrl, apiKey, options = {}) {
       try {
         const errorData = JSON.parse(errorText);
         errorMessage = errorData.error?.message || errorMessage;
-      } catch {
-        errorMessage = errorText || errorMessage;
+      } catch (parseError) {
+        if (!(parseError instanceof SyntaxError)) {
+          throw parseError;
+        }
+        throw new Error(formatAiProviderError(response.status, errorText || errorMessage));
       }
 
       throw new Error(`AI API error: ${response.status} - ${errorMessage}`);
@@ -187,9 +216,12 @@ export async function chatCompletion(userMessage) {
         const errorData = JSON.parse(errorText);
         console.error("[WI Notify AI] AI request failed.", errorData);
         errorMessage = errorData.error?.message || errorMessage;
-      } catch {
-        console.error("[WI Notify AI] AI request failed with non-JSON body.", errorText);
-        errorMessage = errorText || errorMessage;
+      } catch (parseError) {
+        if (!(parseError instanceof SyntaxError)) {
+          throw parseError;
+        }
+        console.error("[WI Notify AI] AI request failed with non-JSON body.", errorText.slice(0, 500));
+        throw new Error(formatAiProviderError(response.status, errorText || errorMessage));
       }
 
       throw new Error(`AI API error: ${response.status} - ${errorMessage}`);

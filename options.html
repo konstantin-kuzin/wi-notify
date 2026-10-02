@@ -403,14 +403,22 @@
             <div class="options__field">
               <span class="options__label">AI Model</span>
               <div class="ai-model-row">
-                <select
-                  class="options__input"
-                  id="ai-model"
-                  name="aiModel"
-                  required
-                >
-                  <option value="">— укажите ключ и обновите список моделей —</option>
-                </select>
+                <div class="ai-model-field">
+                  <input
+                    class="options__input"
+                    id="ai-model"
+                    name="aiModel"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="Выберите из списка или введите имя модели"
+                    role="combobox"
+                    aria-expanded="false"
+                    aria-controls="ai-model-list"
+                    aria-autocomplete="list"
+                    required
+                  >
+                  <ul class="options__combo-list" id="ai-model-list" role="listbox" hidden></ul>
+                </div>
                 <button
                   class="options__button options__button--secondary ai-model-refresh"
                   type="button"
@@ -418,7 +426,7 @@
                   title="Обновить список моделей"
                 >Обновить</button>
               </div>
-              <span class="options__hint">Список моделей запрашивается с сервера провайдера. Кнопка «Обновить» перезагружает список.</span>
+              <span class="options__hint">Список моделей запрашивается с сервера провайдера. Если список не загрузился, введите имя модели вручную. Кнопка «Обновить» перезагружает список.</span>
             </div>
 
             <label class="options__field">

@@ -146,7 +146,8 @@ body {
   font: inherit;
 }
 
-select.options__input {
+select.options__input,
+.ai-model-row #ai-model {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 34px;
@@ -162,16 +163,27 @@ select.options__input {
   min-height: 72px;
 }
 
-/* Строка выбора модели: селект + кнопка обновления списка. */
-.ai-model-row {
+/* Строка выбора модели: поле с подсказками + кнопка обновления списка.
+   Селектор с родителем нужен, чтобы display:flex не проигрывал правилу .options__field > :not(.options__label). */
+.options__field > .ai-model-row {
   display: flex;
   align-items: stretch;
   gap: 8px;
 }
 
-.ai-model-row .options__input {
+.ai-model-row .ai-model-field {
+  position: relative;
   flex: 1 1 auto;
-  width: auto;
+  min-width: 0;
+}
+
+.ai-model-row .ai-model-field:focus-within {
+  z-index: 5;
+}
+
+.ai-model-row .options__input {
+  width: 100%;
+  min-width: 0;
   max-width: none;
 }
 

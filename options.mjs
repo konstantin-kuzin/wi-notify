@@ -51,7 +51,8 @@ const aiOptionsBody = document.querySelector("#ai-options-body");
 const aiUseFixedProviderInput = document.querySelector("#ai-use-fixed-provider");
 const aiBaseUrlInput = document.querySelector("#ai-base-url");
 const aiApiKeyInput = document.querySelector("#ai-api-key");
-const aiModelSelect = document.querySelector("#ai-model");
+const aiModelInput = document.querySelector("#ai-model");
+const aiModelList = document.querySelector("#ai-model-list");
 const aiModelRefreshButton = document.querySelector("#ai-model-refresh");
 const aiServicePromptTextarea = document.querySelector("#ai-service-prompt");
 const saveAiButton = document.querySelector("#save-ai-button");
@@ -59,6 +60,8 @@ const saveAiStatus = document.querySelector("#save-ai-status");
 
 /** Кэш последнего успешно загруженного списка моделей провайдера. */
 let aiModelsCache = null;
+/** Имена моделей, которые показываются в выпадающем списке поля AI Model. */
+let aiModelIds = [];
 const LIST_QUERIES_MESSAGE_TYPE = "list-work-item-queries";
 const WORK_ITEM_QUERY_HINT = "Если Query не выбран, в\u00A0popup попадают все ваши задачи. Выбранный Query заменяет эту выборку.";
 let queryReloadTimer = null;
@@ -181,7 +184,7 @@ async function init() {
   aiUseFixedProviderInput.checked = Boolean(aiConfig.useFixedProvider);
   aiBaseUrlInput.value = aiConfig.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl;
   aiApiKeyInput.value = aiConfig.apiKey ?? DEFAULT_AI_CONFIG.apiKey;
-  aiModelSelect.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
+  aiModelInput.value = aiConfig.model ?? DEFAULT_AI_CONFIG.model;
   aiServicePromptTextarea.value = aiConfig.servicePrompt ?? DEFAULT_AI_CONFIG.servicePrompt;
   applyAiServicePromptVisibility();
   await applyAiProviderUi();
@@ -192,6 +195,28 @@ async function init() {
 
   aiModelRefreshButton.addEventListener("click", () => {
     void refreshAiModels({ allowPermissionRequest: true });
+  });
+
+  aiModelInput.addEventListener("click", () => {
+    openAiModelList("");
+  });
+
+  aiModelInput.addEventListener("input", () => {
+    openAiModelList(aiModelInput.value);
+  });
+
+  aiModelInput.addEventListener("keydown", (event) => {
+    handleAiModelKeydown(event);
+  });
+
+  aiModelInput.addEventListener("blur", () => {
+    closeAiModelList();
+  });
+
+  document.addEventListener("mousedown", (event) => {
+    if (!event.target.closest(".ai-model-field")) {
+      closeAiModelList();
+    }
   });
 
   aiBaseUrlInput.addEventListener("change", () => {
@@ -237,46 +262,123 @@ async function buildConfigForApi() {
 }
 
 /**
- * Заполняет селект моделей. Текущее (сохранённое) значение сохраняется,
- * даже если его ещё нет в загруженном списке.
+ * Заполняет подсказки моделей. Введённое вручную значение не затирается,
+ * даже если его нет в загруженном списке.
  * @param {string[]} models
  * @param {string} [selectedModel]
  */
 function setAiModelOptions(models, selectedModel) {
-  const previousValue = selectedModel ?? aiModelSelect.value;
-  aiModelSelect.textContent = "";
-
-  const ids = [...new Set(models)];
-  if (previousValue && !ids.includes(previousValue)) {
-    ids.unshift(previousValue);
+  if (selectedModel !== undefined) {
+    aiModelInput.value = selectedModel;
   }
 
-  if (ids.length === 0) {
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "— укажите ключ и обновите список моделей —";
-    aiModelSelect.append(placeholder);
+  const ids = [...new Set(models.filter(Boolean))];
+  const currentValue = aiModelInput.value.trim();
+  if (currentValue && !ids.includes(currentValue)) {
+    ids.unshift(currentValue);
+  }
+
+  aiModelIds = ids;
+
+  if (!currentValue && ids.length > 0 && selectedModel === undefined) {
+    aiModelInput.value = ids[0];
+  }
+
+  if (!aiModelList.hidden) {
+    openAiModelList("");
+  }
+}
+
+/** Показывает список моделей. Пустой фильтр — весь список, как у селекта. */
+function openAiModelList(filter) {
+  const query = filter.trim().toLowerCase();
+  const visible = query
+    ? aiModelIds.filter((id) => id.toLowerCase().includes(query))
+    : aiModelIds;
+  const currentValue = aiModelInput.value.trim();
+
+  aiModelList.textContent = "";
+
+  if (visible.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "options__combo-empty";
+    empty.textContent = aiModelIds.length === 0
+      ? "Список пуст — введите имя модели вручную"
+      : "Нет совпадений";
+    aiModelList.append(empty);
+  } else {
+    for (const id of visible) {
+      const item = document.createElement("li");
+      item.className = "options__combo-item";
+      item.setAttribute("role", "option");
+      item.textContent = id;
+      item.setAttribute("aria-selected", id === currentValue ? "true" : "false");
+      item.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        aiModelInput.value = id;
+        closeAiModelList();
+      });
+      aiModelList.append(item);
+    }
+  }
+
+  aiModelList.hidden = false;
+  aiModelInput.setAttribute("aria-expanded", "true");
+  aiModelList.querySelector("[aria-selected='true']")?.scrollIntoView({ block: "nearest" });
+}
+
+function closeAiModelList() {
+  aiModelList.hidden = true;
+  aiModelInput.setAttribute("aria-expanded", "false");
+}
+
+function handleAiModelKeydown(event) {
+  const items = [...aiModelList.querySelectorAll("[role='option']")];
+
+  if (event.key === "Escape") {
+    closeAiModelList();
     return;
   }
 
-  for (const id of ids) {
-    const option = document.createElement("option");
-    option.value = id;
-    option.textContent = id;
-    aiModelSelect.append(option);
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (aiModelList.hidden || items.length === 0) {
+      openAiModelList("");
+      return;
+    }
+
+    const currentIndex = items.findIndex((item) => item.getAttribute("aria-selected") === "true");
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = currentIndex < 0
+      ? (delta > 0 ? 0 : items.length - 1)
+      : (currentIndex + delta + items.length) % items.length;
+
+    items.forEach((item, index) => {
+      item.setAttribute("aria-selected", index === nextIndex ? "true" : "false");
+    });
+    items[nextIndex]?.scrollIntoView({ block: "nearest" });
+    return;
   }
 
-  aiModelSelect.value = previousValue && ids.includes(previousValue) ? previousValue : ids[0];
+  if (event.key === "Enter" && !aiModelList.hidden) {
+    const selected = aiModelList.querySelector("[aria-selected='true']");
+    if (!selected) {
+      return;
+    }
+    event.preventDefault();
+    aiModelInput.value = selected.textContent;
+    closeAiModelList();
+  }
 }
 
-/** Сбрасывает кэш списка моделей и очищает селект. */
+/** Сбрасывает кэш списка моделей и очищает подсказки, не трогая введённое имя. */
 function invalidateAiModelsCache() {
   aiModelsCache = null;
   setAiModelOptions([]);
 }
 
 /**
- * Загружает список моделей провайдера и заполняет селект.
+ * Загружает список моделей провайдера и заполняет подсказки поля.
  * @param {{ allowPermissionRequest?: boolean, silent?: boolean }} [options]
  */
 async function refreshAiModels(options = {}) {
@@ -311,7 +413,11 @@ async function refreshAiModels(options = {}) {
   } catch (error) {
     console.error("[WI Notify Options] Failed to load AI models.", error);
     if (!silent) {
-      setOptionsStatus(saveAiStatus, "Не удалось загрузить список моделей: " + error.message, "err");
+      setOptionsStatus(
+        saveAiStatus,
+        "Не удалось загрузить список моделей: " + error.message + " Введите имя модели вручную.",
+        "err",
+      );
     }
   }
 }
@@ -335,9 +441,9 @@ async function applyAiProviderUi() {
   }
 
   aiBaseUrlInput.required = !fixed;
-  aiModelSelect.required = !fixed;
+  aiModelInput.required = !fixed;
   aiBaseUrlInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
-  aiModelSelect.closest(".options__field")?.toggleAttribute("hidden", fixed);
+  aiModelInput.closest(".options__field")?.toggleAttribute("hidden", fixed);
 }
 
 /**
@@ -358,7 +464,7 @@ async function buildAiConfigForSave() {
     useFixedProvider: aiUseFixedProviderInput.checked,
     baseUrl: aiBaseUrlInput.value.trim(),
     apiKey: aiApiKeyInput.value.trim(),
-    model: aiModelSelect.value.trim(),
+    model: aiModelInput.value.trim(),
     servicePrompt: aiServicePromptTextarea.value.trim(),
   });
 }
