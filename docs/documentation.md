@@ -110,7 +110,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `reviewWorkItemType` | `Review` | Нет (хардкод) | Тип создаваемого WI |
 | `reviewTemplateId` | `""` | Да | GUID командного шаблона; задаётся в настройках |
 | `reviewTemplateTeam` | `""` | Да | Команда-владелец шаблона |
-| `reviewDesignTypes` | `Task,Mockup,Requirement` | Нет (хардкод) | Типы исходных WI для показа пункта в меню «...» через запятую; пусто = все типы |
+| `reviewDesignTypes` | `Task,Mockup,Requirement` | Да (поле «Где показывать») | Типы исходных WI для показа пункта в меню «...» через запятую; пусто = все типы |
 | `reviewPlaceholderText` | `Название и ссылка на задачу` | Нет (хардкод) | Текст в Description шаблона, заменяемый на ссылку исходной задачи |
 | `reviewParentId` | `""` | Да | Родительская задача; Review привязывается как child. Пусто — связь не добавлять |
 | `reviewEnabled` | `true` | Да (тоггл) | Вкл/выкл сценария: раскрытие блока настроек и показ пункта в меню «...» формы WI |
@@ -125,10 +125,9 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 При каждом `loadAdoConfig()` следующие поля **всегда** берутся из `DEFAULT_ADO_CONFIG` и **не** перекрываются устаревшими значениями из storage:
 
 - `reviewWorkItemType`
-- `reviewDesignTypes`
 - `reviewPlaceholderText`
 
-`reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` хранятся только в `chrome.storage` (страница настроек), в коде дефолты пустые.
+`reviewDesignTypes` редактируется на вкладке «Дизайн-ревью» (поле «Где показывать») и хранится в `chrome.storage`. `reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` хранятся только в `chrome.storage` (страница настроек), в коде дефолты пустые.
 
 ### Валидация
 

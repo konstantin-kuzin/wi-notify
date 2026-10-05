@@ -2,6 +2,7 @@ import {
   ADO_CONFIG_KEY,
   DEFAULT_ADO_CONFIG,
   loadAdoConfig,
+  parseReviewDesignTypes,
   validateAdoConfig,
   validateReviewConfig,
 } from "./ado-config.mjs";
@@ -41,6 +42,7 @@ const reviewParentIdInput = document.querySelector("#review-parent-id");
 const reviewProjectInput = document.querySelector("#review-project");
 const reviewTemplateTeamInput = document.querySelector("#review-template-team");
 const reviewTemplateIdInput = document.querySelector("#review-template-id");
+const reviewDesignTypesField = document.querySelector("[data-review-design-types]");
 const saveReviewButton = document.querySelector("#save-review-button");
 const saveReviewStatus = document.querySelector("#save-review-status");
 
@@ -157,6 +159,10 @@ async function init() {
   reviewProjectInput.value = config.reviewProject ?? DEFAULT_ADO_CONFIG.reviewProject;
   reviewTemplateTeamInput.value = config.reviewTemplateTeam ?? DEFAULT_ADO_CONFIG.reviewTemplateTeam;
   reviewTemplateIdInput.value = config.reviewTemplateId ?? DEFAULT_ADO_CONFIG.reviewTemplateId;
+  wireTypesInput(reviewDesignTypesField);
+  for (const t of parseReviewDesignTypes(config.reviewDesignTypes)) {
+    addTypeChip(reviewDesignTypesField, t);
+  }
   updateDesignLeadFieldAvatar();
   setupDesignLeadCombo();
 
@@ -544,9 +550,9 @@ async function handleReviewSubmit() {
     reviewProject: reviewProjectInput.value.trim(),
     reviewTemplateTeam: reviewTemplateTeamInput.value.trim(),
     reviewTemplateId: reviewTemplateIdInput.value.trim(),
+    reviewDesignTypes: readReviewDesignTypes().join(","),
     // Поля без UI — хранятся хардкодом из дефолтов конфига.
     reviewWorkItemType: DEFAULT_ADO_CONFIG.reviewWorkItemType,
-    reviewDesignTypes: DEFAULT_ADO_CONFIG.reviewDesignTypes,
     reviewPlaceholderText: DEFAULT_ADO_CONFIG.reviewPlaceholderText,
   };
 
@@ -567,6 +573,15 @@ async function handleReviewSubmit() {
   }
 
   setOptionsStatus(saveReviewStatus, "Благополучно сохранено", "ok");
+}
+
+/** Выбранные типы WI в поле «Где показывать» блока «Задача на ревью». */
+function readReviewDesignTypes() {
+  return Array.from(
+    reviewDesignTypesField?.querySelectorAll("[data-types-chips] .custom-tags__chip") ?? [],
+  )
+    .map((chip) => chip.dataset.value)
+    .filter(Boolean);
 }
 
 /**
@@ -1212,6 +1227,10 @@ async function refreshCustomButtonTypeFields() {
     for (const chip of card.querySelectorAll("[data-types-chips] .custom-tags__chip")) {
       if (!typeNames.has(chip.dataset.value)) chip.remove();
     }
+  }
+
+  for (const chip of reviewDesignTypesField?.querySelectorAll("[data-types-chips] .custom-tags__chip") ?? []) {
+    if (!typeNames.has(chip.dataset.value)) chip.remove();
   }
 }
 

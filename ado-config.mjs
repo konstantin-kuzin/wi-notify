@@ -35,8 +35,9 @@ export const DEFAULT_ADO_CONFIG = {
    *   в создаваемую задачу через API. Редактируется в настройках.
    * `reviewTemplateTeam` — команда, которой принадлежит шаблон (нужна для чтения полей шаблона по API).
    *   Редактируется в настройках.
-   * `reviewDesignTypes` — типы исходных задач, для которых показывать пункт в меню «...» (через запятую);
-   *   например `Task,Mockup,Requirement`. Пусто — для всех. Без UI.
+   * `reviewDesignTypes` — типы исходных задач, для которых показывать пункт «Design Review»
+   *   в меню «...» (через запятую); например `Task,Mockup,Requirement`. Пусто — для всех.
+   *   Редактируется в настройках (поле «Где показывать»).
    * `reviewPlaceholderText` — текст-плейсхолдер в разделе «Продуктовая задача» шаблона, который
    *   заменяется на имя и ссылку исходной задачи (FR-010). Без UI.
    * `reviewParentId` — номер родительской задачи; созданная задача привязывается к ней как child
@@ -83,7 +84,6 @@ export async function loadAdoConfig() {
   // Поля сценария «Ревью» без UI — всегда берём из дефолтов (хардкод),
   // чтобы устаревшие значения из storage их не перекрывали.
   raw.reviewWorkItemType = DEFAULT_ADO_CONFIG.reviewWorkItemType;
-  raw.reviewDesignTypes = DEFAULT_ADO_CONFIG.reviewDesignTypes;
   raw.reviewPlaceholderText = DEFAULT_ADO_CONFIG.reviewPlaceholderText;
 
   // Remove deprecated fields
