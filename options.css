@@ -636,11 +636,33 @@ select.options__input,
   display: none;
 }
 
+.custom-buttons__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Чип «Добавить» в конце полосы вкладок. */
+.custom-buttons__tab--add {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--accent);
+}
+
+.custom-buttons__tab--add:hover {
+  background: #eef4fb;
+}
+
 .custom-buttons__list {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+
+/* Видима только карточка активной вкладки; display:flex у .custom-card перебивает [hidden]. */
+.custom-card[hidden] {
+  display: none;
 }
 
 .options__button--secondary {

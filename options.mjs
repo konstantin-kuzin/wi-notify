@@ -1896,28 +1896,110 @@ async function buildCard(config = null) {
     }
   });
 
+  card.querySelector('[data-field="name"]').addEventListener("input", () => {
+    syncCustomButtonChip(card);
+  });
+
   card.querySelector("[data-remove]").addEventListener("click", async () => {
+    const cards = getCustomButtonCards();
+    const idx = cards.indexOf(card);
     const stored = await loadAdoConfig();
     const buttons = (stored.customReviewButtons ?? []).filter((b) => b.id !== card.dataset.id);
     await saveCustomButtons(buttons);
     card.remove();
+    const remaining = getCustomButtonCards();
+    activeCustomButtonId =
+      remaining[Math.min(Math.max(idx, 0), remaining.length - 1)]?.dataset.id ?? "";
+    renderCustomButtonsTabs();
+    updateCustomButtonsVisibility();
   });
 
   return card;
 }
 
+let activeCustomButtonId = "";
+
+function getCustomButtonCards() {
+  return Array.from(document.querySelectorAll("#custom-buttons-list [data-card]"));
+}
+
+/**
+ * Чипы-вкладки «Своих кнопок»: один чип = одна кнопка (подпись — название кнопки),
+ * последний чип «Добавить» создаёт новую кнопку и открывает её вкладку.
+ */
+function renderCustomButtonsTabs() {
+  const strip = document.getElementById("custom-buttons-tabs");
+  if (!strip) return;
+
+  const cards = getCustomButtonCards();
+  if (!cards.some((card) => card.dataset.id === activeCustomButtonId)) {
+    activeCustomButtonId = cards[cards.length - 1]?.dataset.id ?? "";
+  }
+
+  strip.innerHTML = "";
+  for (const card of cards) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "options__tab custom-buttons__tab";
+    chip.setAttribute("role", "tab");
+    chip.dataset.cardId = card.dataset.id;
+    chip.textContent = card.querySelector('[data-field="name"]')?.value.trim() || "Без названия";
+    const isActive = card.dataset.id === activeCustomButtonId;
+    chip.setAttribute("aria-selected", String(isActive));
+    chip.setAttribute("tabindex", isActive ? "0" : "-1");
+    chip.addEventListener("click", () => {
+      activeCustomButtonId = card.dataset.id;
+      renderCustomButtonsTabs();
+      updateCustomButtonsVisibility();
+    });
+    strip.appendChild(chip);
+  }
+
+  const addChip = document.createElement("button");
+  addChip.type = "button";
+  addChip.className = "options__tab custom-buttons__tab custom-buttons__tab--add";
+  addChip.setAttribute("role", "tab");
+  addChip.setAttribute("aria-selected", "false");
+  addChip.setAttribute("tabindex", "-1");
+  addChip.title = "Добавить кнопку";
+  addChip.textContent = "+ Добавить";
+  addChip.addEventListener("click", async () => {
+    const card = await buildCard(null);
+    document.getElementById("custom-buttons-list")?.appendChild(card);
+    activeCustomButtonId = card.dataset.id;
+    renderCustomButtonsTabs();
+    updateCustomButtonsVisibility();
+  });
+  strip.appendChild(addChip);
+}
+
+function updateCustomButtonsVisibility() {
+  for (const card of getCustomButtonCards()) {
+    card.hidden = card.dataset.id !== activeCustomButtonId;
+  }
+}
+
+/** Обновляет подпись чипа-вкладки по текущему названию кнопки. */
+function syncCustomButtonChip(card) {
+  const chip = document.querySelector(
+    `#custom-buttons-tabs [data-card-id="${CSS.escape(card.dataset.id)}"]`,
+  );
+  if (chip) {
+    chip.textContent = card.querySelector('[data-field="name"]')?.value.trim() || "Без названия";
+  }
+}
+
 async function initCustomButtons() {
   const list = document.getElementById("custom-buttons-list");
-  const addBtn = document.getElementById("add-custom-button");
-  if (!list || !addBtn) return;
+  const strip = document.getElementById("custom-buttons-tabs");
+  if (!list || !strip) return;
 
   const stored = await loadAdoConfig();
   for (const cfg of stored.customReviewButtons ?? []) {
     list.appendChild(await buildCard(cfg));
   }
-  addBtn.addEventListener("click", async () => {
-    list.appendChild(await buildCard(null));
-  });
+  renderCustomButtonsTabs();
+  updateCustomButtonsVisibility();
 }
 
 void initCustomButtons();
