@@ -108,8 +108,7 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 | `pat` | `""` | Нет | Токен при `authMode === "pat"` |
 | `reviewProject` | `""` | Да | Проект, в котором всегда создаётся Review |
 | `reviewWorkItemType` | `Review` | Нет (хардкод) | Тип создаваемого WI |
-| `reviewTemplateId` | `""` | Да | GUID командного шаблона; задаётся в настройках |
-| `reviewTemplateTeam` | `""` | Да | Команда-владелец шаблона |
+| `reviewTemplateUrl` | `""` | Да | Ссылка на страницу создания задачи на ревью; содержит `templateId` (GUID шаблона) и `ownerId` (ID команды) |
 | `reviewDesignTypes` | `Task,Mockup,Requirement` | Да (поле «Где показывать») | Типы исходных WI для показа пункта в меню «...» через запятую; пусто = все типы |
 | `reviewPlaceholderText` | `Название и ссылка на задачу` | Нет (хардкод) | Текст в Description шаблона, заменяемый на ссылку исходной задачи |
 | `reviewParentId` | `""` | Да | Родительская задача; Review привязывается как child. Пусто — связь не добавлять |
@@ -127,12 +126,12 @@ API Azure DevOps: [`ado-api.mjs`](../ado-api.mjs).
 - `reviewWorkItemType`
 - `reviewPlaceholderText`
 
-`reviewDesignTypes` редактируется на вкладке «Дизайн-ревью» (поле «Где показывать») и хранится в `chrome.storage`. `reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` хранятся только в `chrome.storage` (страница настроек), в коде дефолты пустые.
+`reviewDesignTypes` редактируется на вкладке «Дизайн-ревью» (поле «Где показывать») и хранится в `chrome.storage`. `reviewProject`, `reviewTemplateUrl` и `reviewParentId` хранятся только в `chrome.storage` (страница настроек), в коде дефолты пустые.
 
 ### Валидация
 
 - `validateAdoConfig` — непустые `apiRoot` и `project`; `refreshIntervalMinutes` — целое ≥ 1; если `workItemQueryId` задан — это GUID.
-- `validateReviewConfig` — непустые `reviewProject`, `reviewTemplateTeam`, `reviewWorkItemType` и `reviewTemplateId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
+- `validateReviewConfig` — непустые `reviewProject`, `reviewWorkItemType` и `reviewTemplateUrl`; `reviewTemplateUrl` должен содержать `templateId` и `ownerId`; если `reviewParentId` задан — положительное целое (`parseReviewParentId`).
 
 ---
 
@@ -421,10 +420,10 @@ content-script                     background                      Azure DevOps
 ### Что делает `createReviewWorkItem`
 
 1. **Исходная задача** — `fetchWorkItemById`; нужны `System.Title`, тип, проект. Без валидного id или title — ошибка.
-2. **Шаблон** — `GET {reviewProject}/{team}/_apis/wit/templates/{reviewTemplateId}`:
+2. **Шаблон** — `GET {reviewProject}/{ownerId}/_apis/wit/templates/{templateId}`:
    - reviewProject = `config.reviewProject` (из настроек, не `config.project`);
-   - team = `config.reviewTemplateTeam` (из настроек);
-   - templateId = `config.reviewTemplateId` (из настроек).
+   - ownerId = `ownerId` из `reviewTemplateUrl` (ID команды);
+   - templateId = `templateId` из `reviewTemplateUrl` (GUID шаблона).
    Поля шаблона копируются в create-patch (кроме `System.AreaId`, `System.IterationId` и ключей с суффиксом `-Add`).
 3. **Fallback**, если шаблон недоступен:
    - `KL.SizeSymbol` = `M`;
@@ -459,7 +458,7 @@ content-script                     background                      Azure DevOps
 - Работает только для **уже сохранённой** WI с номером.
 - Создание идёт через API в `reviewProject` из настроек; предзаполненная UI-форма create не открывается.
 - При частичном сбое связей созданная Review **не удаляется** — нужно донастроить вручную.
-- `reviewProject`, `reviewTemplateTeam`, `reviewTemplateId` и `reviewParentId` задаются в настройках (в коде не хранятся); типы исходных WI — только в коде (`ado-config.mjs`).
+- `reviewProject`, `reviewTemplateUrl` и `reviewParentId` задаются в настройках (в коде не хранятся); типы исходных WI — только в коде (`ado-config.mjs`).
 - Плейсхолдер Pixso в Description захардкожен в `ado-api.mjs`, не в конфиге.
 - Content-script читает `adoConfig` из storage напрямую (для фильтра типов); хардкод типов всё равно обеспечивается `loadAdoConfig` в service worker.
 - В ответе `title` сейчас равен заголовку **исходной** задачи, а не итоговому Title Review (с префиксом продукта).

@@ -31,10 +31,9 @@ export const DEFAULT_ADO_CONFIG = {
    * `reviewProject` — Team Project, в котором всегда создаётся задача на ревью
    *   (независимо от `project` в основных настройках / проекта исходной WI). Редактируется в настройках.
    * `reviewWorkItemType` — тип создаваемого work item (по умолчанию `Review`). Без UI.
-   * `reviewTemplateId` — GUID командного шаблона (work item template), поля которого копируются
-   *   в создаваемую задачу через API. Редактируется в настройках.
-   * `reviewTemplateTeam` — команда, которой принадлежит шаблон (нужна для чтения полей шаблона по API).
-   *   Редактируется в настройках.
+   * `reviewTemplateUrl` — полная или частичная ссылка на страницу создания задачи на ревью
+   *   (страница содержит templateId и ownerId). Система извлекает из неё templateId (GUID шаблона)
+   *   и ownerId (ID команды) для запроса полей шаблона по API. Редактируется в настройках.
    * `reviewDesignTypes` — типы исходных задач, для которых показывать пункт «Design Review»
    *   в меню «...» (через запятую); например `Task,Mockup,Requirement`. Пусто — для всех.
    *   Редактируется в настройках (поле «Где показывать»).
@@ -51,9 +50,8 @@ export const DEFAULT_ADO_CONFIG = {
    */
   reviewEnabled: true,
   reviewProject: "",
-  reviewTemplateTeam: "",
   reviewWorkItemType: "Review",
-  reviewTemplateId: "",
+  reviewTemplateUrl: "",
   reviewDesignTypes: "Task,Mockup,Requirement",
   reviewPlaceholderText: "Название и ссылка на задачу",
   reviewParentId: "",
@@ -93,6 +91,8 @@ export async function loadAdoConfig() {
   delete raw.selectedGroupIds;
   delete raw.selectedGroupLabels;
   delete raw.iterationPath;
+  delete raw.reviewTemplateTeam;
+  delete raw.reviewTemplateId;
 
   // Save back to storage to persist the corrected config
   await chrome.storage.local.set({ [ADO_CONFIG_KEY]: raw });
@@ -147,16 +147,27 @@ export function validateReviewConfig(config) {
     errors.push("Укажите проект для задач на ревью.");
   }
 
-  if (!String(config?.reviewTemplateTeam ?? "").trim()) {
-    errors.push("Укажите команду шаблона задачи на ревью.");
-  }
-
   if (!String(config?.reviewWorkItemType ?? "").trim()) {
     errors.push("Укажите тип задачи на ревью (например Review).");
   }
 
-  if (!String(config?.reviewTemplateId ?? "").trim()) {
-    errors.push("Укажите GUID шаблона задачи на ревью (templateId).");
+  const rawUrl = String(config?.reviewTemplateUrl ?? "").trim();
+  if (!rawUrl) {
+    errors.push("Укажите ссылку на шаблон задачи на ревью (содержит templateId и ownerId).");
+  } else {
+    const parsed = parseReviewTemplateUrl(rawUrl);
+    if (!parsed) {
+      errors.push("Не удалось извлечь templateId и ownerId из ссылки на шаблон. Убедитесь, что ссылка содержит параметры templateId и ownerId.");
+    } else {
+      if (!parsed.templateId) {
+        errors.push("В ссылке на шаблон не найден параметр templateId (GUID шаблона).");
+      } else if (!isTemplateIdGuid(parsed.templateId)) {
+        errors.push("templateId из ссылки имеет некорректный формат GUID.");
+      }
+      if (!parsed.ownerId) {
+        errors.push("В ссылке на шаблон не найден параметр ownerId (ID команды).");
+      }
+    }
   }
 
   const rawParent = String(config?.reviewParentId ?? "").trim();
@@ -165,6 +176,49 @@ export function validateReviewConfig(config) {
   }
 
   return errors;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isTemplateIdGuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    String(value ?? "").trim(),
+  );
+}
+
+/**
+ * Извлекает templateId и ownerId из ссылки на страницу создания задачи на ревью.
+ * Принимает полную URL или фрагмент с query-параметрами (например "templateId=...&ownerId=...").
+ * @param {string} value
+ * @returns {{ templateId: string, ownerId: string } | null}
+ */
+export function parseReviewTemplateUrl(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    try {
+      const normalized = raw.startsWith("?") ? raw : `?${raw.replace(/^\?/, "")}`;
+      url = new URL(`https://template.resolve/${normalized}`);
+    } catch {
+      return null;
+    }
+  }
+
+  const templateId = url.searchParams.get("templateId");
+  const ownerId = url.searchParams.get("ownerId");
+
+  if (!templateId && !ownerId) return null;
+
+  return {
+    templateId: (templateId ?? "").trim(),
+    ownerId: (ownerId ?? "").trim(),
+  };
 }
 
 /**

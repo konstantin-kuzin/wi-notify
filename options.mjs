@@ -40,8 +40,7 @@ const reviewDesignLeadAvatarInput = document.querySelector("#review-design-lead-
 const reviewDesignLeadAvatarSlot = document.querySelector("#review-design-lead-avatar-slot");
 const reviewParentIdInput = document.querySelector("#review-parent-id");
 const reviewProjectInput = document.querySelector("#review-project");
-const reviewTemplateTeamInput = document.querySelector("#review-template-team");
-const reviewTemplateIdInput = document.querySelector("#review-template-id");
+const reviewTemplateUrlInput = document.querySelector("#review-template-url");
 const reviewDesignTypesField = document.querySelector("[data-review-design-types]");
 const saveReviewButton = document.querySelector("#save-review-button");
 const saveReviewStatus = document.querySelector("#save-review-status");
@@ -157,8 +156,7 @@ async function init() {
   reviewDesignLeadInput.value = reviewDesignLeadNameInput.value;
   reviewParentIdInput.value = config.reviewParentId ?? DEFAULT_ADO_CONFIG.reviewParentId;
   reviewProjectInput.value = config.reviewProject ?? DEFAULT_ADO_CONFIG.reviewProject;
-  reviewTemplateTeamInput.value = config.reviewTemplateTeam ?? DEFAULT_ADO_CONFIG.reviewTemplateTeam;
-  reviewTemplateIdInput.value = config.reviewTemplateId ?? DEFAULT_ADO_CONFIG.reviewTemplateId;
+  reviewTemplateUrlInput.value = config.reviewTemplateUrl ?? DEFAULT_ADO_CONFIG.reviewTemplateUrl;
   wireTypesInput(reviewDesignTypesField);
   for (const t of parseReviewDesignTypes(config.reviewDesignTypes)) {
     addTypeChip(reviewDesignTypesField, t);
@@ -548,8 +546,7 @@ async function handleReviewSubmit() {
     reviewDesignLeadAvatar: reviewDesignLeadAvatarInput.value.trim(),
     reviewParentId: reviewParentIdInput.value.trim(),
     reviewProject: reviewProjectInput.value.trim(),
-    reviewTemplateTeam: reviewTemplateTeamInput.value.trim(),
-    reviewTemplateId: reviewTemplateIdInput.value.trim(),
+    reviewTemplateUrl: reviewTemplateUrlInput.value.trim(),
     reviewDesignTypes: readReviewDesignTypes().join(","),
     // Поля без UI — хранятся хардкодом из дефолтов конфига.
     reviewWorkItemType: DEFAULT_ADO_CONFIG.reviewWorkItemType,

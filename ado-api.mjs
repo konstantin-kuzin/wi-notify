@@ -2,6 +2,7 @@ import {
   isWorkItemQueryId,
   normalizeApiRoot,
   parseReviewParentId,
+  parseReviewTemplateUrl,
   parseWorkItemId,
   resolveApiVersion,
   resolveReviewProject,
@@ -1396,22 +1397,21 @@ async function createWorkItemWithAssigneeFallback(config, url, createOptions, cr
  * @returns {Promise<Record<string, unknown>|null>}
  */
 async function fetchReviewTemplateFields(config) {
-  const templateId = String(config.reviewTemplateId ?? "").trim();
-  const team = String(config.reviewTemplateTeam ?? "").trim();
+  const rawUrl = String(config.reviewTemplateUrl ?? "").trim();
+  const parsed = parseReviewTemplateUrl(rawUrl);
 
-  if (!templateId || !team) {
+  if (!parsed?.templateId || !parsed?.ownerId) {
     return null;
   }
 
   const project = encodeURIComponent(resolveReviewProject(config));
-  const teamSeg = encodeURIComponent(team);
   const query = new URLSearchParams({
     "api-version": resolveApiVersion(config),
   });
 
   const data = await adoFetch(
     config,
-    `${project}/${teamSeg}/_apis/wit/templates/${encodeURIComponent(templateId)}?${query.toString()}`,
+    `${project}/${encodeURIComponent(parsed.ownerId)}/_apis/wit/templates/${encodeURIComponent(parsed.templateId)}?${query.toString()}`,
   );
 
   return data?.fields ?? null;

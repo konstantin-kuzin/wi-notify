@@ -166,35 +166,19 @@
                 placeholder="Название Team Project"
                 required
               >
-              <span class="options__hint">Team Project, в котором создаётся задача на ревью (независимо от проекта в основных настройках).</span>
+              <span class="options__hint">Проект, в котором создаётся ревью</span>
             </label>
 
             <label class="options__field">
-              <span class="options__label">Команда шаблона</span>
+              <span class="options__label">Ссылка на шаблон</span>
               <input
                 class="options__input"
-                id="review-template-team"
-                name="reviewTemplateTeam"
+                id="review-template-url"
+                name="reviewTemplateUrl"
                 type="text"
                 autocomplete="off"
-                placeholder="Название команды"
-                required
               >
-              <span class="options__hint">Команда-владелец шаблона work item; нужна для чтения полей шаблона по API.</span>
-            </label>
-
-            <label class="options__field">
-              <span class="options__label">GUID шаблона</span>
-              <input
-                class="options__input"
-                id="review-template-id"
-                name="reviewTemplateId"
-                type="text"
-                autocomplete="off"
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                required
-              >
-              <span class="options__hint">GUID командного шаблона work item, поля которого копируются в создаваемую задачу на ревью.</span>
+              <span class="options__hint">Ссылка на шаблон задачи</span>
             </label>
 
             <div class="options__field" data-review-design-types>
