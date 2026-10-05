@@ -31,6 +31,7 @@ options.mjs — страница настроек
 | `add-comment` | popup | Добавить комментарий к WI |
 | `list-work-item-queries` | options | Список сохранённых Query проекта |
 | `get-wi-types` / `get-wi-tags` / `get-wi-relation-types` | options | Метаданные проекта |
+| `get-wi-type-fields` | options | Поля выбранного типа WI (для «Дополнительных полей» кастомной кнопки) |
 | `search-work-items` | options | Поиск WI по WIQL |
 | `create-custom-wi` | content-script | Создать WI по кастомной кнопке |
 | `create-review-task` | content-script | Создать задачу на ревью из шаблона |
@@ -47,7 +48,7 @@ UI со списком WI. Позволяет фильтровать (All/Active
 Табы: **Основные**, **Ревью**, **AI Rewrite**, **Кастомные кнопки**. Управляет сохранением/загрузкой конфигов (`adoConfig`, `aiConfig`) через `chrome.storage.local`, валидирует их через `validateAdoConfig`/`validateReviewConfig`/`validateAiConfig`, запрашивает метаданные проекта (типы WI, теги, Query) у background.
 
 ### ado-api.mjs — клиент Azure DevOps REST API
-Функции для всех ADO операций: `adoFetch` (с retry на 429 и экспоненциальной задержкой), `fetchWorkItemsByIds`, `queryAssignedWorkItemIds`, `createReviewWorkItem`, `createCustomWorkItem`, `createWorkItemComment`, `fetchWorkItemComments`, `updateWorkItemState`, `searchWorkItems`, `fetchConnectionIdentity`, `fetchProjectWorkItemTypes`, `fetchProjectTags`, `fetchWorkItemRelationTypes`, `resolveWorkItemTypeIcons`, `resolveStateCategoriesByType`, `sortWorkItemsNewestFirst`, `mapWorkItemToItem`. Использует кэширование для metadata (typeStates, icons, projectGuid).
+Функции для всех ADO операций: `adoFetch` (с retry на 429 и экспоненциальной задержкой), `fetchWorkItemsByIds`, `queryAssignedWorkItemIds`, `createReviewWorkItem`, `createCustomWorkItem`, `createWorkItemComment`, `fetchWorkItemComments`, `updateWorkItemState`, `searchWorkItems`, `fetchConnectionIdentity`, `fetchProjectWorkItemTypes`, `fetchWorkItemTypeFields`, `fetchProjectTags`, `fetchWorkItemRelationTypes`, `resolveWorkItemTypeIcons`, `resolveStateCategoriesByType`, `sortWorkItemsNewestFirst`, `mapWorkItemToItem`. Использует кэширование для metadata (typeStates, icons, projectGuid).
 
 ### ado-config.mjs — конфигурация ADO и валидация
 `DEFAULT_ADO_CONFIG` с полями: `apiRoot`, `project`, `workItemQueryId`, `refreshIntervalMinutes`, `apiVersion`, `authMode` (session/pat), `pat`, настройки ревью (`reviewEnabled`, `reviewProject`, `reviewTemplateId` и др.), `customReviewButtons`. `loadAdoConfig()` объединяет defaults с storage, применяет фиксированные значения для полей без UI. Валидаторы: `validateAdoConfig`, `validateReviewConfig`. Парсеры: `parseWorkItemId`, `parseReviewParentId`, `parseReviewDesignTypes`. Утилиты: `normalizeApiRoot`, `resolveApiVersion`, `resolveReviewProject`, `resolveRefreshIntervalMinutes`.
@@ -59,7 +60,7 @@ UI со списком WI. Позволяет фильтровать (All/Active
 `DEFAULT_AI_CONFIG` с полями: `enabled`, `useFixedProvider`, `baseUrl`, `apiModel`, `apiKey`, `servicePrompt`. `FIXED_AI_BASE_URL` = `https://llm.kaspersky-labs.com/v1/`, `FIXED_AI_MODEL` = `best-for-chat`. `loadRawAiConfig()` — как есть из storage (для формы). `loadAiConfig()` — эффективные настройки с учётом `applyFixedAiProvider`. `applyFixedAiProvider(config)` — подменяет base URL и модель фиксированными значениями когда `useFixedProvider: true`. `validateAiConfig(config)` — валидация.
 
 ### custom-wi-fields.mjs — чистые хелперы для кастомных WI
-Тестируются через node:test. `resolveCustomTitle`, `tagsToFieldValue`, `descriptionToHtml`, `buildCustomWorkItemFields`. Собирает поля ADO для создаваемого Work Item по конфигу кастомной кнопки (title, areaPath, tags, description, assignedTo и т.д.).
+Тестируются через node:test. `resolveCustomTitle`, `tagsToFieldValue`, `descriptionToHtml`, `buildCustomWorkItemFields`, `applyCustomFields` (дополнительные поля кнопки), `coerceCustomFieldValue` (значение → тип для PATCH: number/boolean/ISO-дата), `isComputedWorkItemField` (фильтр служебных полей). Собирает поля ADO для создаваемого Work Item по конфигу кастомной кнопки (title, areaPath, tags, description, assignedTo, customFields и т.д.).
 
 ### timesheet-api.mjs — интеграция TimeSheet
 `addWorkItemEffortToCurrentWeek({login, workItemId, hours, date})` — добавляет/увеличивает усилие для work item в текущей неделе. Разрешает login через API, загружает timesheet model, создает задачу если нужно, сохраняет effort и верифицирует. Использует `https://hqrndtfsts.avp.ru/TimeSheet`.

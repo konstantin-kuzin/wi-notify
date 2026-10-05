@@ -821,3 +821,47 @@ select.options__input,
   flex-direction: column;
   gap: 12px;
 }
+
+/* «Дополнительные поля»: строки «select поля + input/select значения». */
+.custom-fields-field {
+  margin-bottom: 0px;
+}
+
+/* Календарь в полях даты: иконка кликабельна и всегда заметна. */
+.custom-field input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.custom-field input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+
+.custom-fields-field__hint {
+  margin-bottom: 6px;
+}
+
+.custom-fields-field [data-add-field] {
+  width: auto;
+  max-width: none;
+  margin: 0 0 6px;
+}
+
+.custom-fields-field .custom-fields {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.custom-field {
+  position: relative;
+  border: 1px dashed #cfcfcf;
+  border-radius: 6px;
+  padding: 12px;
+  padding-right: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  --label-width: 110px;
+}

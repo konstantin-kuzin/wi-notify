@@ -1134,6 +1134,7 @@ function getRefreshIntervalMinutesValue() {
 
 const CUSTOM_MSG = {
   types: "get-wi-types",
+  typeFields: "get-wi-type-fields",
   tags: "get-wi-tags",
   relations: "get-wi-relation-types",
   search: "search-work-items",
@@ -1160,6 +1161,8 @@ async function saveCustomButtons(buttons) {
 let wiTypesCache = null;
 /** Проект, для которого закэшированы типы (поле «Проект» в основных настройках). */
 let wiTypesCacheProject = "";
+/** Кэш полей типа WI: `${project}::${type}` → Promise<fields[]> (project = поля «Проект»). */
+let wiTypeFieldsCache = new Map();
 let relationTypesCache = null;
 let projectTagsCache = null;
 let projectTagsCacheProject = "";
@@ -1171,6 +1174,7 @@ function getMainSettingsProject() {
 function invalidateWiTypesCache() {
   wiTypesCache = null;
   wiTypesCacheProject = "";
+  wiTypeFieldsCache = new Map();
 }
 
 function invalidateProjectTagsCache() {
@@ -1209,9 +1213,24 @@ async function getProjectTags() {
   return projectTagsCache;
 }
 
+/** Поля типа WI проекта основных настроек (для «Дополнительных полей»). */
+function getWiTypeFields(wiType) {
+  const type = String(wiType ?? "").trim();
+  const project = getMainSettingsProject();
+  const key = `${project}::${type}`;
+  if (!wiTypeFieldsCache.has(key)) {
+    const request = sendBg({ type: CUSTOM_MSG.typeFields, project, wiType: type })
+      .then((r) => (r.ok ? r.results : []))
+      .catch(() => []);
+    wiTypeFieldsCache.set(key, request);
+  }
+  return wiTypeFieldsCache.get(key);
+}
+
 /**
- * После смены проекта в основных настройках — обновить «Тип Wi» и
- * убрать чипы «Показывать для типов», которых нет в новом проекте.
+ * После смены проекта в основных настройках — обновить «Тип Wi», строки
+ * «Дополнительных полей» и убрать чипы «Показывать для типов», которых
+ * нет в новом проекте.
  */
 async function refreshCustomButtonTypeFields() {
   invalidateWiTypesCache();
@@ -1224,6 +1243,7 @@ async function refreshCustomButtonTypeFields() {
       const selected = select.value;
       await fillWiTypeSelect(select, typeNames.has(selected) ? selected : "");
     }
+    await refreshCustomFieldRows(card);
     for (const chip of card.querySelectorAll("[data-types-chips] .custom-tags__chip")) {
       if (!typeNames.has(chip.dataset.value)) chip.remove();
     }
@@ -1258,6 +1278,23 @@ function readCardConfig(card) {
     }))
     .filter((l) => l.relType && (l.toParent || l.targetId > 0));
 
+  const customFields = Array.from(card.querySelectorAll("[data-field-card]"))
+    .map((row) => {
+      const select = row.querySelector("[data-field-select]");
+      const valueControl = row.querySelector("[data-field-value] input, [data-field-value] select");
+      // Тип с сервера может отсутствовать — для календаря-полей даты проставляем
+      // его по контролу, чтобы значение приводилось к ISO при создании задачи.
+      const inferredType = row.dataset.fieldType
+        || (valueControl?.type === "datetime-local" ? "System.DateTime" : "");
+      return {
+        referenceName: row.dataset.referenceName || select?.value || "",
+        name: select?.selectedOptions?.[0]?.textContent ?? "",
+        type: inferredType,
+        value: valueControl ? String(valueControl.value ?? "") : "",
+      };
+    })
+    .filter((f) => f.referenceName && String(f.value).trim() !== "");
+
   return {
     id: card.dataset.id,
     name: val('[data-field="name"]').value.trim(),
@@ -1274,6 +1311,7 @@ function readCardConfig(card) {
     tags,
     showForTypes,
     links,
+    customFields,
   };
 }
 
@@ -1527,6 +1565,178 @@ async function addLinkCard(card, link = null) {
   card.querySelector("[data-links]").appendChild(node);
 }
 
+/** ISO-строка (или "YYYY-MM-DDTHH:mm") → значение для input type="datetime-local". */
+function isoToDatetimeLocalValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * Контрол значения дополнительного поля по метаданным из API:
+ * select — при allowedValues или булевом типе, иначе input
+ * (datetime-local / number / text). Дата определяется по типу, а при
+ * отсутствии типа — по referenceName/имени (ResolvedDate, «Дата старта»…).
+ */
+function createFieldValueControl(fieldMeta, rawValue) {
+  const value = String(rawValue ?? "");
+  const type = String(fieldMeta?.type ?? "");
+  const allowed = Array.isArray(fieldMeta?.allowedValues) ? fieldMeta.allowedValues : [];
+
+  if (allowed.length) {
+    const select = document.createElement("select");
+    select.className = "options__input";
+    if (!fieldMeta?.alwaysRequired) {
+      select.appendChild(new Option("— не задано —", ""));
+    }
+    for (const v of allowed) {
+      select.appendChild(new Option(String(v), String(v)));
+    }
+    select.value = allowed.some((v) => String(v) === value) ? value : "";
+    return select;
+  }
+
+  if (/Boolean/i.test(type)) {
+    const select = document.createElement("select");
+    select.className = "options__input";
+    select.appendChild(new Option("— не задано —", ""));
+    select.appendChild(new Option("Да", "true"));
+    select.appendChild(new Option("Нет", "false"));
+    select.value = value === "true" || value === "false" ? value : "";
+    return select;
+  }
+
+  const input = document.createElement("input");
+  input.className = "options__input";
+  input.autocomplete = "off";
+  if (looksLikeDateField(fieldMeta)) {
+    input.type = "datetime-local";
+    input.value = isoToDatetimeLocalValue(value);
+    // Нативный календарь Chrome: открываем по клику в любом месте поля.
+    const openPicker = () => {
+      try {
+        if (typeof input.showPicker === "function") {
+          input.showPicker();
+        }
+      } catch (_error) {
+        // showPicker требует жест пользователя или не поддерживается —
+        // остаётся ввод с клавиатуры и иконка календаря.
+      }
+    };
+    input.addEventListener("click", openPicker);
+    input.addEventListener("focus", openPicker);
+  } else if (/Double|Integer|Number/i.test(type)) {
+    input.type = "number";
+    input.step = "any";
+    input.value = value;
+  } else {
+    input.type = "text";
+    input.value = value;
+  }
+  return input;
+}
+
+/** Похожа ли мета поля на дату: System.DateTime, …Date в referenceName или в имени. */
+function looksLikeDateField(fieldMeta) {
+  const type = String(fieldMeta?.type ?? "");
+  const referenceName = String(fieldMeta?.referenceName ?? "");
+  const name = String(fieldMeta?.name ?? "");
+  return /date/i.test(type) || /date/i.test(referenceName) || /date|дата/i.test(name);
+}
+
+/** Записывает метаданные выбранного поля в dataset строки и пересобирает контрол значения. */
+function syncFieldValueControl(row, fieldMeta, rawValue = "") {
+  row.dataset.referenceName = fieldMeta?.referenceName ?? "";
+  row.dataset.fieldType = fieldMeta?.type ?? "";
+  row.dataset.required = fieldMeta?.alwaysRequired ? "1" : "";
+  const slot = row.querySelector("[data-field-value]");
+  if (slot) {
+    slot.innerHTML = "";
+    slot.appendChild(createFieldValueControl(fieldMeta, rawValue));
+  }
+}
+
+/** Заполняет select поля строки из полей типа WI карточки и восстанавливает контрол значения. */
+async function fillFieldSelect(row, wiType, selected, value = "") {
+  const select = row.querySelector("[data-field-select]");
+  select.innerHTML = "";
+  syncFieldValueControl(row, null, "");
+
+  const type = String(wiType ?? "").trim();
+  if (!type) {
+    select.appendChild(new Option("Сначала выберите тип задачи", ""));
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+
+  const placeholder = new Option("— выберите поле —", "");
+  select.appendChild(placeholder);
+  if (!selected) placeholder.selected = true;
+
+  // Уже выбранные в других строках поля — запрещаем повторно (в PATCH путь дублировался бы).
+  const usedRefs = new Set(
+    Array.from(row.parentElement.querySelectorAll("[data-field-card]"))
+      .filter((other) => other !== row)
+      .map((other) => other.dataset.referenceName)
+      .filter(Boolean),
+  );
+
+  const fields = await getWiTypeFields(type);
+  if (!fields.length) {
+    select.innerHTML = "";
+    select.appendChild(new Option("Не удалось загрузить поля типа", ""));
+    // Запрос полей не удался — сохраняем предыдущий выбор, чтобы данные
+    // кнопки не потерялись при сохранении; контрол значения пересоздаём пустым.
+    syncFieldValueControl(row, null, value);
+    row.dataset.referenceName = selected || "";
+    return;
+  }
+  for (const f of fields) {
+    const opt = new Option(f.name, f.referenceName);
+    opt.disabled = usedRefs.has(f.referenceName);
+    if (f.alwaysRequired) opt.textContent = `${f.name} *`;
+    select.appendChild(opt);
+  }
+  if (selected && fields.some((f) => f.referenceName === selected)) {
+    select.value = selected;
+    const meta = fields.find((f) => f.referenceName === selected);
+    syncFieldValueControl(row, meta, value);
+  }
+}
+
+/** Пересобирает строки дополнительных полей карточки под текущий тип WI (текущие значения сохраняются). */
+async function refreshCustomFieldRows(card) {
+  const wiType = card.querySelector('[data-field="wiType"]')?.value ?? "";
+  for (const row of card.querySelectorAll("[data-field-card]")) {
+    const control = row.querySelector("[data-field-value] input, [data-field-value] select");
+    await fillFieldSelect(row, wiType, row.dataset.referenceName ?? "", control ? control.value : "");
+  }
+}
+
+/** Строка «Дополнительного поля»: select поля + input/select значения + удаление. */
+async function addFieldRow(card, preset = null) {
+  const tpl = document.getElementById("custom-field-card-template");
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  const wiType = card.querySelector('[data-field="wiType"]')?.value ?? "";
+  const select = node.querySelector("[data-field-select]");
+
+  select.addEventListener("change", async () => {
+    const fields = await getWiTypeFields(card.querySelector('[data-field="wiType"]')?.value ?? "");
+    const meta = fields.find((f) => f.referenceName === select.value) ?? null;
+    syncFieldValueControl(node, meta, "");
+  });
+
+  node.querySelector("[data-field-remove]").addEventListener("click", () => node.remove());
+
+  card.querySelector("[data-fields-list]").appendChild(node);
+  await fillFieldSelect(node, wiType, preset?.referenceName ?? "", preset?.value ?? "");
+}
+
 /** Обновляет аватар выбранного исполнителя в поле карточки (по аналогии с design-лидом). */
 function updateAssigneeAvatar(card) {
   const slot = card.querySelector("[data-assignee-avatar]");
@@ -1635,6 +1845,15 @@ async function buildCard(config = null) {
     addLinkCard(card);
   });
 
+  for (const f of config?.customFields ?? []) await addFieldRow(card, f);
+  card.querySelector("[data-add-field]").addEventListener("click", (e) => {
+    e.preventDefault();
+    void addFieldRow(card);
+  });
+  card.querySelector('[data-field="wiType"]').addEventListener("change", () => {
+    void refreshCustomFieldRows(card);
+  });
+
   card.querySelector("[data-save]").addEventListener("click", async () => {
     const status = card.querySelector("[data-status]");
     const cfg = readCardConfig(card);
@@ -1648,6 +1867,16 @@ async function buildCard(config = null) {
     }
     if (!cfg.titleFromParent && !cfg.title) {
       setOptionsStatus(status, "Укажите название задачи или включите «из исходной задачи»", "err");
+      return;
+    }
+
+    // Обязательное поле типа оставлено пустым — ADO отвергнет создание.
+    for (const row of card.querySelectorAll("[data-field-card]")) {
+      if (row.dataset.required !== "1") continue;
+      const control = row.querySelector("[data-field-value] input, [data-field-value] select");
+      if (String(control?.value ?? "").trim()) continue;
+      const fieldLabel = row.querySelector("[data-field-select]")?.selectedOptions?.[0]?.textContent ?? "";
+      setOptionsStatus(status, `Поле «${fieldLabel}» обязательно — укажите значение или удалите строку`, "err");
       return;
     }
 

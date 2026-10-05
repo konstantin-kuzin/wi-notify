@@ -26,6 +26,7 @@ import {
   fetchProjectWorkItemTypes,
   fetchProjectTags,
   fetchWorkItemRelationTypes,
+  fetchWorkItemTypeFields,
   searchWorkItems,
   createCustomWorkItem,
 } from "./ado-api.mjs";
@@ -45,6 +46,7 @@ const CREATE_REVIEW_TASK_MESSAGE_TYPE = "create-review-task";
 const CREATE_REVIEW_TASK_TIMEOUT_MS = 60000;
 const SEARCH_IDENTITIES_MESSAGE_TYPE = "search-identities";
 const GET_WI_TYPES_MESSAGE_TYPE = "get-wi-types";
+const GET_WI_TYPE_FIELDS_MESSAGE_TYPE = "get-wi-type-fields";
 const GET_WI_TAGS_MESSAGE_TYPE = "get-wi-tags";
 const GET_WI_RELATION_TYPES_MESSAGE_TYPE = "get-wi-relation-types";
 const SEARCH_WORK_ITEMS_MESSAGE_TYPE = "search-work-items";
@@ -617,6 +619,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (
     message?.type === GET_WI_TYPES_MESSAGE_TYPE
+    || message?.type === GET_WI_TYPE_FIELDS_MESSAGE_TYPE
     || message?.type === GET_WI_TAGS_MESSAGE_TYPE
     || message?.type === GET_WI_RELATION_TYPES_MESSAGE_TYPE
   ) {
@@ -629,7 +632,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        // Типы/тэги WI — только из проекта основных настроек.
+        // Типы/поля типа/тэги WI — только из проекта основных настроек.
         // Options может передать актуальный project из формы (ещё до/после Save).
         const projectOverride = String(message.project ?? "").trim();
         const scopedConfig = projectOverride
@@ -639,6 +642,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let results;
         if (message.type === GET_WI_TYPES_MESSAGE_TYPE) {
           results = await fetchProjectWorkItemTypes(scopedConfig);
+        } else if (message.type === GET_WI_TYPE_FIELDS_MESSAGE_TYPE) {
+          results = await fetchWorkItemTypeFields(scopedConfig, message.wiType);
         } else if (message.type === GET_WI_TAGS_MESSAGE_TYPE) {
           results = await fetchProjectTags(scopedConfig);
         } else {

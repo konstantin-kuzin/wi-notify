@@ -6,7 +6,7 @@ import {
   resolveApiVersion,
   resolveReviewProject,
 } from "./ado-config.mjs";
-import { buildCustomWorkItemFields } from "./custom-wi-fields.mjs";
+import { buildCustomWorkItemFields, isComputedWorkItemField } from "./custom-wi-fields.mjs";
 
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 900;
@@ -301,15 +301,16 @@ function normalizeAssignedToIdentity(raw) {
 }
 
 /**
- * Готовит Assigned To для дизайн-лида.
+ * Готовит значение Assigned To из сохранённой identity-строки.
  * Если в storage лежит email-формат (часто unknown на on-prem),
  * перезапрашивает identity API и предпочитает DOMAIN\alias.
  * Если резолв не удался — возвращает display name (без email).
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {unknown} rawValue
  * @returns {Promise<string>}
  */
-async function resolveDesignLeadAssignedTo(config) {
-  const stored = normalizeAssignedToIdentity(config.reviewDesignLead);
+async function resolveAssignedToIdentity(config, rawValue) {
+  const stored = normalizeAssignedToIdentity(rawValue);
   if (!stored) {
     return "";
   }
@@ -340,7 +341,7 @@ async function resolveDesignLeadAssignedTo(config) {
         return resolved.assignedTo;
       }
     } catch (error) {
-      logAdoError("resolveDesignLeadAssignedTo", error);
+      logAdoError("resolveAssignedToIdentity", error);
     }
   }
 
@@ -350,6 +351,15 @@ async function resolveDesignLeadAssignedTo(config) {
   }
 
   return stored;
+}
+
+/**
+ * Готовит Assigned To для дизайн-лида.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @returns {Promise<string>}
+ */
+async function resolveDesignLeadAssignedTo(config) {
+  return resolveAssignedToIdentity(config, config.reviewDesignLead);
 }
 
 /**
@@ -1301,6 +1311,86 @@ const TEMPLATE_SKIP_FIELDS = new Set([
 ]);
 
 /**
+ * Собирает JSON-patch создания WI из карты полей (пустые значения пропускаются).
+ * @param {Record<string, unknown>} createFields
+ * @returns {Array<{op:string,path:string,value:unknown}>}
+ */
+function buildFieldPatch(createFields) {
+  return Object.entries(createFields)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+}
+
+/**
+ * Создаёт Work Item POST-запросом. Если сервер отверг Assigned To как
+ * «unknown identity» (типично для email-формата на on-prem) — повторяет
+ * попытку с именем без email, затем вовсе без Assigned To (ADO назначит
+ * создателя) и добавляет warning.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} url
+ * @param {RequestInit} createOptions
+ * @param {Record<string, unknown>} createFields
+ * @param {{logPrefix:string, assigneeWarning:string}} options
+ * @returns {Promise<{created: object, warnings: string[]}>}
+ */
+async function createWorkItemWithAssigneeFallback(config, url, createOptions, createFields, { logPrefix, assigneeWarning }) {
+  let created;
+  const warnings = [];
+  try {
+    created = await adoFetch(config, url, {
+      ...createOptions,
+      body: JSON.stringify(buildFieldPatch(createFields)),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const assignedToUnknown = /unknown identity/i.test(message)
+      && /Assigned To/i.test(message)
+      && createFields["System.AssignedTo"];
+
+    if (!assignedToUnknown) {
+      throw error;
+    }
+
+    logAdoError(`${logPrefix}:assignedTo`, error);
+
+    const assignedCandidates = [];
+    const failedAssignedTo = String(createFields["System.AssignedTo"]);
+    const nameOnlyMatch = failedAssignedTo.match(/^(.*)<[^>]+>\s*$/);
+    const nameOnly = nameOnlyMatch ? normalizeText(nameOnlyMatch[1]) : "";
+    if (nameOnly && nameOnly !== failedAssignedTo) {
+      assignedCandidates.push(nameOnly);
+    }
+
+    let assignedFixed = false;
+    for (const candidate of assignedCandidates) {
+      createFields["System.AssignedTo"] = candidate;
+      try {
+        created = await adoFetch(config, url, {
+          ...createOptions,
+          body: JSON.stringify(buildFieldPatch(createFields)),
+        });
+        assignedFixed = true;
+        break;
+      } catch (retryError) {
+        logAdoError(`${logPrefix}:assignedToRetry`, retryError);
+      }
+    }
+
+    if (!assignedFixed) {
+      // Identity не резолвится — создаём без Assigned To (ADO назначит создателя).
+      delete createFields["System.AssignedTo"];
+      created = await adoFetch(config, url, {
+        ...createOptions,
+        body: JSON.stringify(buildFieldPatch(createFields)),
+      });
+      warnings.push(`${assigneeWarning}: identity не распознана. Назначьте вручную.`);
+    }
+  }
+
+  return { created, warnings };
+}
+
+/**
  * Читает поля командного шаблона задачи на ревью (work item template).
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
  * @returns {Promise<Record<string, unknown>|null>}
@@ -1429,10 +1519,6 @@ export async function createReviewWorkItem(config, source) {
     pixsoUrl,
   );
 
-  const patch = Object.entries(createFields)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
-
   const reviewProject = resolveReviewProject(config);
   const project = encodeURIComponent(reviewProject);
   const typeSeg = `$${encodeURIComponent(type)}`;
@@ -1445,81 +1531,20 @@ export async function createReviewWorkItem(config, source) {
     headers: {
       "Content-Type": "application/json-patch+json",
     },
-    body: JSON.stringify(patch),
   };
 
   // FR-007: создание work item типа Review всегда в reviewProject из настроек.
-  let created;
-  const warnings = [];
-  try {
-    created = await adoFetch(
-      config,
-      `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
-      createOptions,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const assignedToUnknown = /unknown identity/i.test(message)
-      && /Assigned To/i.test(message)
-      && createFields["System.AssignedTo"];
-
-    if (!assignedToUnknown) {
-      throw error;
-    }
-
-    logAdoError("createReviewWorkItem:assignedTo", error);
-
-    const assignedCandidates = [];
-    const failedAssignedTo = String(createFields["System.AssignedTo"]);
-    const nameOnlyMatch = failedAssignedTo.match(/^(.*)<[^>]+>\s*$/);
-    const nameOnly = nameOnlyMatch ? normalizeText(nameOnlyMatch[1]) : "";
-    if (nameOnly && nameOnly !== failedAssignedTo) {
-      assignedCandidates.push(nameOnly);
-    }
-
-    let assignedFixed = false;
-    for (const candidate of assignedCandidates) {
-      createFields["System.AssignedTo"] = candidate;
-      const retryPatch = Object.entries(createFields)
-        .filter(([, value]) => value !== undefined && value !== null && value !== "")
-        .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
-
-      try {
-        created = await adoFetch(
-          config,
-          `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
-          {
-            ...createOptions,
-            body: JSON.stringify(retryPatch),
-          },
-        );
-        assignedFixed = true;
-        break;
-      } catch (retryError) {
-        logAdoError("createReviewWorkItem:assignedToRetry", retryError);
-      }
-    }
-
-    if (!assignedFixed) {
-      // Identity не резолвится — создаём без Assigned To (ADO назначит создателя).
-      delete createFields["System.AssignedTo"];
-      const patchWithoutAssignee = Object.entries(createFields)
-        .filter(([, value]) => value !== undefined && value !== null && value !== "")
-        .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
-
-      created = await adoFetch(
-        config,
-        `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
-        {
-          ...createOptions,
-          body: JSON.stringify(patchWithoutAssignee),
-        },
-      );
-      warnings.push(
-        `Не удалось назначить дизайн-лида (${designLead}): identity не распознана. Назначьте вручную.`,
-      );
-    }
-  }
+  // Если Assigned To не резолвится на сервере — фолбэк: имя без email, затем без назначения.
+  const { created, warnings } = await createWorkItemWithAssigneeFallback(
+    config,
+    `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+    createOptions,
+    createFields,
+    {
+      logPrefix: "createReviewWorkItem",
+      assigneeWarning: `Не удалось назначить дизайн-лида (${designLead})`,
+    },
+  );
 
   const reviewId = Number(created?.id);
 
@@ -1714,6 +1739,50 @@ export async function fetchProjectWorkItemTypes(config) {
 }
 
 /**
+ * Поля выбранного типа WI (для дополнительных полей кастомной кнопки).
+ * Возвращает referenceName/name/type, флаг обязательности и allowedValues;
+ * вычисляемые служебные поля (System.Id и т.п.) отфильтрованы.
+ * Список допустимых значений (picklist-поля вроде SubState) приходит только
+ * при `$expand=allowedValues`; если сервер не знает такой параметр — повторяем
+ * запрос без него (значения будут пустыми, контрол значения — input).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} wiType имя типа (например Task) или referenceName
+ * @returns {Promise<Array<{referenceName:string,name:string,type:string,alwaysRequired:boolean,allowedValues:(string|number|boolean)[]}>>}
+ */
+export async function fetchWorkItemTypeFields(config, wiType) {
+  const type = String(wiType ?? "").trim();
+  if (!type) {
+    return [];
+  }
+  const project = encodeURIComponent(config.project.trim());
+  const typeSeg = encodeURIComponent(type);
+  const apiVersion = resolveApiVersion(config);
+  const path = `${project}/_apis/wit/workitemtypes/${typeSeg}/fields`;
+  const parse = (data) => {
+    const value = Array.isArray(data?.value) ? data.value : [];
+    return value
+      .map((entry) => ({
+        referenceName: normalizeText(entry?.referenceName),
+        name: normalizeText(entry?.name),
+        type: normalizeText(entry?.type),
+        alwaysRequired: Boolean(entry?.alwaysRequired),
+        allowedValues: Array.isArray(entry?.allowedValues) ? entry.allowedValues : [],
+      }))
+      .filter((f) => f.referenceName && f.name && !isComputedWorkItemField(f.referenceName))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "ru", { sensitivity: "base" }));
+  };
+
+  const withExpand = new URLSearchParams({ $expand: "allowedValues", "api-version": apiVersion });
+  try {
+    return parse(await adoFetch(config, `${path}?${withExpand.toString()}`));
+  } catch (error) {
+    logAdoError("fetchWorkItemTypeFields($expand=allowedValues)", error);
+    const plain = new URLSearchParams({ "api-version": apiVersion });
+    return parse(await adoFetch(config, `${path}?${plain.toString()}`));
+  }
+}
+
+/**
  * Существующие тэги проекта. Если эндпоинт недоступен — пустой список (ручной ввод остаётся).
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
  * @returns {Promise<string[]>}
@@ -1881,21 +1950,29 @@ export async function createCustomWorkItem(config, buttonConfig, source) {
     throw new Error("Название задачи не задано (и не удалось взять из исходной задачи).");
   }
 
-  const patch = Object.entries(createFields)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([ref, value]) => ({ op: "add", path: `/fields/${ref}`, value }));
+  // Назначенный пользователь: в storage мог остаться email-формат, который
+  // on-prem TFS не принимает — резолвим через Identity Picker, предпочитаем DOMAIN\alias.
+  const storedAssignedTo = String(createFields["System.AssignedTo"] ?? "").trim();
+  if (storedAssignedTo) {
+    createFields["System.AssignedTo"] = await resolveAssignedToIdentity(config, storedAssignedTo);
+  }
 
   const project = encodeURIComponent(sourceProject);
   const typeSeg = `$${encodeURIComponent(type)}`;
   const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
 
-  const created = await adoFetch(
+  // Если Assigned To не резолвится на сервере — фолбэк: имя без email, затем без назначения.
+  const { created, warnings } = await createWorkItemWithAssigneeFallback(
     config,
     `${project}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json-patch+json" },
-      body: JSON.stringify(patch),
+    },
+    createFields,
+    {
+      logPrefix: "createCustomWorkItem",
+      assigneeWarning: `Не удалось назначить исполнителя (${storedAssignedTo})`,
     },
   );
 
@@ -1905,7 +1982,6 @@ export async function createCustomWorkItem(config, buttonConfig, source) {
   }
 
   const newUrl = buildWorkItemWebUrl(config.apiRoot, sourceProject, newId, created);
-  const warnings = [];
 
   const links = Array.isArray(buttonConfig?.links) ? buttonConfig.links : [];
   for (const link of links) {

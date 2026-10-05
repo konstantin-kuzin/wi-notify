@@ -307,11 +307,33 @@
             <div class="custom-links" data-links></div>
           </div>
 
+          <div class="options__field custom-fields-field">
+            <span class="options__label">Дополнительные поля</span>
+            <a class="options__text-link" href="#" data-add-field>+ Добавить поле</a>
+            <span class="options__hint custom-fields-field__hint">Значения запишутся в поля создаваемой задачи. Список полей зависит от выбранного типа задачи.</span>
+            
+            <div class="custom-fields" data-fields-list></div>
+          </div>
+
           <div class="options__actions">
             <button class="options__button" type="button" data-save>Сохранить</button>
             <span class="options__status" data-status role="status"></span>
           </div>
         </fieldset>
+      </template>
+
+      <template id="custom-field-card-template">
+        <div class="custom-field" data-field-card>
+          <button class="custom-link__remove" type="button" data-field-remove title="Удалить поле" aria-label="Удалить поле">×</button>
+          <label class="options__field">
+            <span class="options__label">Поле</span>
+            <select class="options__input" data-field-select></select>
+          </label>
+          <div class="options__field">
+            <span class="options__label">Значение</span>
+            <div class="custom-field__value" data-field-value></div>
+          </div>
+        </div>
       </template>
 
       <template id="custom-link-card-template">

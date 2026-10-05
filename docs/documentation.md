@@ -475,8 +475,8 @@ content-script                     background                      Azure DevOps
 | [`options.html`](../options.html) / [`options.mjs`](../options.mjs) | UI блока «Кастомные кнопки для создания задач», сохранение в `adoConfig` |
 | [`content-script.mjs`](../content-script.mjs) | Пункты меню, фильтр `showForTypes`, сообщение `create-custom-wi` |
 | [`background.mjs`](../background.mjs) | Handler `create-custom-wi`, helpers для options (`get-wi-types` и др.) |
-| [`ado-api.mjs`](../ado-api.mjs) | `createCustomWorkItem`, связи |
-| [`custom-wi-fields.mjs`](../custom-wi-fields.mjs) | `resolveCustomTitle`, `buildCustomWorkItemFields` (без chrome/DOM) |
+| [`ado-api.mjs`](../ado-api.mjs) | `createCustomWorkItem`, связи, `fetchWorkItemTypeFields` (поля типа WI) |
+| [`custom-wi-fields.mjs`](../custom-wi-fields.mjs) | `resolveCustomTitle`, `buildCustomWorkItemFields`, `applyCustomFields`, `coerceCustomFieldValue`, `isComputedWorkItemField` (без chrome/DOM) |
 | [`ado-config.mjs`](../ado-config.mjs) | Поле `customReviewButtons` в `DEFAULT_ADO_CONFIG` / `loadAdoConfig` |
 
 ### Модель `customReviewButtons`
@@ -498,6 +498,7 @@ content-script                     background                      Azure DevOps
 | `tags` | string[] | Теги → `System.Tags` через `"; "` |
 | `showForTypes` | string[] | Типы **исходной** WI, для которых показывать кнопку; пусто = все |
 | `links` | object[] | Связи после создания (см. ниже) |
+| `customFields` | object[] | Дополнительные поля создаваемой WI (см. ниже) |
 
 Элемент `links[]`:
 
@@ -507,14 +508,24 @@ content-script                     background                      Azure DevOps
 | `targetId` / `targetTitle` | Целевая WI из поиска (если не `toParent`) |
 | `toParent` | `true` — цель связи = исходная WI, из которой нажали кнопку |
 
+Элемент `customFields[]`:
+
+| Поле | Смысл |
+|------|--------|
+| `referenceName` | Reference name поля типа WI (например `Custom.Behavior`) |
+| `name` | Отображаемое имя поля (для select в настройках) |
+| `type` | Тип поля из API (`System.String`, `System.Double`, `System.DateTime`, `System.Boolean`, …) |
+| `value` | Значение как введено/выбрано в контроле; при создании приводится к типу (`coerceCustomFieldValue`) |
+
 ### Настройки (options)
 
 Блок **Кастомные кнопки для создания задач** (`#custom-buttons-section`):
 
 1. Список карточек (`#custom-buttons-list`) + **+ Добавить кнопку**.
-2. На карточке: название кнопки, тип создаваемой задачи, «Где показывать» (`showForTypes`), название / префикс / «из исходной», assignee, теги, описание / «из исходной», блок **Связать** (`+ Добавить ссылку`).
-3. **Сохранить** на карточке пишет весь массив `customReviewButtons` в storage (`saveCustomButtons`).
-4. Валидация перед сохранением: непустые `name` и `wiType`; если не `titleFromParent` — непустой `title`.
+2. На карточке: название кнопки, тип создаваемой задачи, «Где показывать» (`showForTypes`), название / префикс / «из исходной», assignee, теги, описание / «из исходной», блок **Связать** (`+ Добавить ссылку`), блок **Дополнительные поля** (`+ Добавить поле`).
+3. **Дополнительные поля** (`customFields`): по кнопке «+ Добавить поле» появляется строка с select'ом поля и контролом значения. Список полей берётся из API по выбранному типу задачи (`get-wi-type-fields` → `fetchWorkItemTypeFields`, запрос идёт с `$expand=allowedValues` — иначе сервер не отдаёт допустимые значения picklist-полей вроде SubState); вычисляемые/служебные поля (System.Id, System.Rev, …) скрыты. Контрол значения зависит от поля: select — при непустых `allowedValues` (picklist) или булевом типе (Да/Нет), иначе input (`datetime-local` с нативным календарём Chrome для дат — открывается по клику на поле, `number` для чисел, `text` для остального). Дата определяется по `type`, а при его отсутствии — по referenceName/имени поля (ResolvedDate, «Start Date»…): on-prem TFS в `workitemtypes/{type}/fields` может не отдавать `type` вовсе; тип для календаря-полей даты проставляется при чтении конфига, чтобы значение приводилось к ISO. Если сервер не знает `$expand` — повторный запрос без него, значения будут пустыми и контрол станет input. Строк можно добавлять сколько угодно; каждая удаляется по «×». Одно поле нельзя выбрать в двух строках одной кнопки. Обязательные поля типа (помечены `*`) с пустым значением блокируют сохранение.
+4. **Сохранить** на карточке пишет весь массив `customReviewButtons` в storage (`saveCustomButtons`).
+5. Валидация перед сохранением: непустые `name` и `wiType`; если не `titleFromParent` — непустой `title`.
 
 Списки **типа WI** и подсказки тегов / «Где показывать» берутся из проекта поля **Проект** в основных настройках (не из `reviewProject`). Кэш типов и тегов сбрасывается при смене коллекции/проекта и после сохранения основных настроек (`refreshCustomButtonTypeFields` убирает чипы типов, которых нет в новом проекте). Disabled-типы в списке не показываются.
 
@@ -566,6 +577,7 @@ Helpers страницы настроек (options → background):
 | Сообщение | Назначение |
 |-----------|------------|
 | `get-wi-types` | Типы WI проекта (опциональный override `project` с формы) |
+| `get-wi-type-fields` | Поля выбранного типа WI (`wiType`, опциональный override `project`) — для «Дополнительных полей» |
 | `get-wi-tags` | Теги проекта |
 | `get-wi-relation-types` | Типы связей для select «Тип связи» |
 | `search-work-items` | Поиск целевой WI для связи по id/title |
@@ -579,7 +591,8 @@ Helpers страницы настроек (options → background):
    - **Title** — `resolveCustomTitle`: свой `title`, либо source title, либо `titlePrefix` + source title **без разделяющего пробела**;
    - **Area / Iteration** — всегда с исходной WI, если заданы;
    - **Assigned To / Tags** — из конфига кнопки, если непустые;
-   - **Description** — при `descriptionFromParent` HTML исходной as-is; иначе plain text → escape + `<br>`.
+   - **Description** — при `descriptionFromParent` HTML исходной as-is; иначе plain text → escape + `<br>`;
+   - **Дополнительные поля** (`customFields`) — `applyCustomFields`: значения приводятся к типу поля (`coerceCustomFieldValue`: числа → number, булевы → boolean, даты → ISO); базовые поля кнопки важнее — доп. поле их не перетирает.
 3. **Создание** — `POST {sourceProject}/_apis/wit/workitems/${wiType}` (`sourceProject` = `System.TeamProject` исходной, fallback на `config.project`). Это **не** `reviewProject`.
 4. **Связи** — для каждого валидного элемента `links`: `addWorkItemRelation`; при `toParent` цель = `sourceId`. Ошибки связей собираются в `warnings`, создание не откатывается.
 5. В ответе `title` — итоговый `System.Title` созданной задачи.
@@ -594,7 +607,7 @@ Helpers страницы настроек (options → background):
 | `background.mjs` | Service worker: alarm, badge, notifications, все message handlers, check updates |
 | `ado-api.mjs` | WIQL/REST ADO, статусы, комментарии, identities, `createReviewWorkItem`, `createCustomWorkItem` |
 | `ado-config.mjs` | `DEFAULT_ADO_CONFIG`, load/validate, хардкод полей ревью, `customReviewButtons` |
-| `custom-wi-fields.mjs` | Чистая сборка полей кастомной WI (`resolveCustomTitle`, `buildCustomWorkItemFields`) |
+| `custom-wi-fields.mjs` | Чистая сборка полей кастомной WI (`resolveCustomTitle`, `buildCustomWorkItemFields`, `applyCustomFields`, `coerceCustomFieldValue`, `isComputedWorkItemField`) |
 | `test/custom-wi-fields.test.mjs` | Node-тесты для `custom-wi-fields.mjs` |
 | `timesheet-api.mjs` | Запись и верификация усилий в TimeSheet |
 | `popup.html` / `popup.css` / `popup.mjs` | UI списка, фильтры, поиск, статус, комментарии, TimeSheet |
