@@ -29,6 +29,7 @@ import {
   fetchWorkItemTypeFields,
   searchWorkItems,
   createCustomWorkItem,
+  createCustomWorkItemFromTemplate,
 } from "./ado-api.mjs";
 import { addWorkItemEffortToCurrentWeek } from "./timesheet-api.mjs";
 import { chatCompletion } from "./ai-api.mjs";
@@ -695,7 +696,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const result = await createCustomWorkItem(config, buttonConfig, { sourceId: message.sourceId });
+        const result = buttonConfig.fromTemplate
+          ? await createCustomWorkItemFromTemplate(config, buttonConfig, { sourceId: message.sourceId })
+          : await createCustomWorkItem(config, buttonConfig, { sourceId: message.sourceId });
 
         let tabOpened = false;
         try {

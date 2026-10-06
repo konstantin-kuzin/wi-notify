@@ -1,5 +1,11 @@
 // Чистые хелперы сборки полей кастомной задачи. Без chrome/DOM — тестируются node:test.
 
+const TEMPLATE_SKIP_FIELD_REFERENCE_NAMES = new Set([
+  "System.AreaId",
+  "System.IterationId",
+  "System.AssignedTo",
+]);
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -152,5 +158,28 @@ export function buildCustomWorkItemFields(buttonConfig, source) {
     }
   }
   applyCustomFields(buttonConfig, fields);
+  return fields;
+}
+
+/**
+ * Поля шаблона ADO → поля для PATCH создания задачи.
+ * Служебные поля (AreaId/IterationId/-Add) пропускаются; System.AssignedTo
+ * берётся из переданного значения assignedTo (если задано), иначе не копируется
+ * (шаблонное значение часто не резолвится на on-prem).
+ * @param {Record<string, unknown>|null|undefined} templateFields
+ * @param {{ assignedTo?: string }} [overrides]
+ * @returns {Record<string, string|number|boolean>}
+ */
+export function buildTemplateWorkItemFields(templateFields, overrides = {}) {
+  const fields = {};
+  const assignedTo = String(overrides?.assignedTo ?? "").trim();
+  for (const [ref, value] of Object.entries(templateFields ?? {})) {
+    if (TEMPLATE_SKIP_FIELD_REFERENCE_NAMES.has(ref) || ref.endsWith("-Add")) continue;
+    if (value === undefined || value === null || value === "") continue;
+    fields[ref] = value;
+  }
+  if (assignedTo) {
+    fields["System.AssignedTo"] = assignedTo;
+  }
   return fields;
 }

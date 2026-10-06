@@ -219,27 +219,29 @@
 
           <label class="options__field">
             <span class="options__label">Название кнопки</span>
-            <input class="options__input" type="text" data-field="name" autocomplete="off" placeholder="Например: Создать баг">
+            <div class="custom-name-row">
+              <input class="options__input" type="text" data-field="name" autocomplete="off" placeholder="Например: Создать баг">
+              <div class="segmented" role="radiogroup" aria-label="Режим создания задачи" data-mode-group>
+                <button class="segmented__item" type="button" role="radio" aria-checked="true" data-mode="new">Новая</button>
+                <button class="segmented__item" type="button" role="radio" aria-checked="false" data-mode="template">Из шаблона</button>
+              </div>
+            </div>
           </label>
 
-          <label class="options__field">
+          <label class="options__field" data-template-field hidden>
+            <span class="options__label">Ссылка на шаблон</span>
+            <input class="options__input" type="text" data-field="templateUrl" autocomplete="off"
+              placeholder="https://…/_workitems/create/Task?templateId=…&ownerId=…">
+            <span class="options__hint">Ссылка на страницу создания задачи из шаблона (содержит templateId и ownerId). Тип, название и описание берутся из шаблона.</span>
+          </label>
+
+          <label class="options__field" data-wi-type-field data-new-only>
             <span class="options__label">Тип задачи</span>
             <select class="options__input" data-field="wiType"></select>
             <span class="options__hint">Тип задачи, которая будет создаваться при нажатии на кнопку.</span>
           </label>
 
-          <div class="options__field">
-            <span class="options__label">Где показывать</span>
-            <div class="custom-tags" data-types>
-              <div class="custom-tags__chips" data-types-chips></div>
-              <input class="options__input" type="text" data-types-input autocomplete="off"
-                placeholder="Выберите типы задач…" role="combobox" aria-expanded="false" aria-autocomplete="list">
-              <ul class="options__combo-list" data-types-list role="listbox" hidden></ul>
-            </div>
-            <span class="options__hint">В WI каких типов будет доступна эта кнопка. Пусто — кнопка будет отображаться во всех задачах.</span>
-          </div>
-
-          <div class="options__field">
+          <div class="options__field" data-new-only>
             <span class="options__label">Название задачи</span>
             <div class="custom-title-controls">
               <input class="options__input custom-title-prefix" type="text" data-field="titlePrefix"
@@ -247,13 +249,23 @@
               <input class="options__input" type="text" data-field="title" autocomplete="off">
             </div>
           </div>
-          <div class="custom-card__checkbox-block">
+          <div class="custom-card__checkbox-block" data-new-only>
             <label class="custom-card__checkbox">
               <input type="checkbox" data-field="titleFromParent">
               <span>Использовать название исходной задачи</span>
             </label>
             <span class="options__hint custom-card__checkbox-hint">Префикс добавится перед названием исходной задачи.</span>
           </div>
+
+          <label class="options__field" data-new-only>
+            <span class="options__label">Описание</span>
+            <textarea class="options__textarea" data-field="description" rows="4"></textarea>
+          </label>
+          <label class="custom-card__checkbox" data-new-only>
+            <input type="checkbox" data-field="descriptionFromParent">
+            <span>Использовать описание из исходной задачи</span>
+          </label>
+
           <div class="options__field">
             <span class="options__label">Назначить на</span>
             <div class="options__combo" data-assignee-combo>
@@ -264,7 +276,7 @@
             </div>
           </div>
 
-          <div class="options__field">
+          <div class="options__field" data-new-only>
             <span class="options__label">Теги</span>
             <div class="custom-tags" data-tags>
               <div class="custom-tags__chips" data-tags-chips></div>
@@ -274,27 +286,29 @@
             </div>
           </div>
 
-          <label class="options__field">
-            <span class="options__label">Описание</span>
-            <textarea class="options__textarea" data-field="description" rows="4"></textarea>
-          </label>
-          <label class="custom-card__checkbox">
-            <input type="checkbox" data-field="descriptionFromParent">
-            <span>Использовать описание из исходной задачи</span>
-          </label>
-
           <div class="options__field custom-links-field">
             <span class="options__label">Связать</span>
-            <a class="options__text-link" href="#" data-add-link>+ Добавить ссылку</a>
+            <a class="options__text-link" href="#" data-add-link>Добавить связь</a>
             <div class="custom-links" data-links></div>
           </div>
 
-          <div class="options__field custom-fields-field">
+          <div class="options__field custom-fields-field" data-new-only>
             <span class="options__label">Дополнительные поля</span>
-            <a class="options__text-link" href="#" data-add-field>+ Добавить поле</a>
+            <a class="options__text-link" href="#" data-add-field>Добавить поле</a>
             <span class="options__hint custom-fields-field__hint">Значения запишутся в поля создаваемой задачи. Список полей зависит от выбранного типа задачи.</span>
             
             <div class="custom-fields" data-fields-list></div>
+          </div>
+
+          <div class="options__field">
+            <span class="options__label">Где показывать</span>
+            <div class="custom-tags" data-types>
+              <div class="custom-tags__chips" data-types-chips></div>
+              <input class="options__input" type="text" data-types-input autocomplete="off"
+                placeholder="Выберите типы задач…" role="combobox" aria-expanded="false" aria-autocomplete="list">
+              <ul class="options__combo-list" data-types-list role="listbox" hidden></ul>
+            </div>
+            <span class="options__hint">В WI каких типов будет доступна эта кнопка. Пусто — кнопка будет отображаться во всех задачах.</span>
           </div>
 
           <div class="options__actions">

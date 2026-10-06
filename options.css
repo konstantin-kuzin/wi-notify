@@ -507,6 +507,62 @@ select.options__input,
   font-weight: 500;
 }
 
+/* Строка «Название кнопки»: поле + переключатель режима справа. */
+.options__field > .custom-name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.custom-name-row > .options__input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Переключатель «Новая | Из шаблона» справа от поля названия. */
+.custom-name-row > .segmented {
+  display: inline-flex;
+  flex: none;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  background: #fff;
+  align-items: center;
+}
+
+.segmented__item {
+  border: none;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+
+.segmented__item:hover {
+  color: var(--primary);
+}
+
+.segmented__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.segmented__item[aria-checked="true"] {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-text);
+}
+
+/* Скрытие элементов в режиме «Из шаблона» */
+.custom-card [data-new-only][hidden] {
+  display: none !important;
+}
+
 /* display:block выше перебивает [hidden], поэтому явно скрываем */
 .options__field[hidden] {
   display: none;

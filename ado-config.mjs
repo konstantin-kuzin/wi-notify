@@ -64,7 +64,11 @@ export const DEFAULT_ADO_CONFIG = {
    * по заданным параметрам. Массив редактируется на странице настроек.
    * `customFields[]` — дополнительные поля создаваемой WI (select поля из списка
    * полей выбранного типа + input/select значения; удаляются по «×»).
-   * @type {Array<{id:string,name:string,wiType:string,wiTypeIcon:{url:string,color:string},title:string,titlePrefix:string,titleFromParent:boolean,assignedTo:string,assignedToName:string,assignedToAvatar:string,description:string,tags:string[],links:Array<{relType:string,targetId:number,targetTitle:string,toParent:boolean}>,customFields:Array<{referenceName:string,name:string,type:string,value:string}>}>}
+   * `fromTemplate: true` + `templateUrl` вместо ручного заполнения полей —
+   * задача создаётся из командного шаблона по ссылке (содержит templateId и ownerId).
+   * При `fromTemplate` поля «Название», «Описание», «Тип», «Теги», «Дополнительные поля»
+   * игнорируются; применяются «Назначить на» и «Связать».
+   * @type {Array<{id:string,name:string,fromTemplate:boolean,templateUrl:string,wiType:string,wiTypeIcon:{url:string,color:string},title:string,titlePrefix:string,titleFromParent:boolean,assignedTo:string,assignedToName:string,assignedToAvatar:string,description:string,descriptionFromParent:boolean,tags:string[],links:Array<{relType:string,targetId:number,targetTitle:string,toParent:boolean}>,showForTypes:string[],customFields:Array<{referenceName:string,name:string,type:string,value:string}>}>}
    */
   customReviewButtons: [],
 };
@@ -297,4 +301,66 @@ function isPlausibleApiVersion(ver) {
 
 export function normalizeApiRoot(apiRoot) {
   return String(apiRoot ?? "").replace(/\/+$/, "");
+}
+
+/**
+ * Разбирает ссылку на шаблон кастомной кнопки «Из шаблона».
+ * Извлекает templateId и ownerId из query-параметров (как parseReviewTemplateUrl),
+ * а также проект и тип задачи из пути URL
+ * (…/<коллекция>/<проект>/_workitems/create/<тип>?templateId=…&ownerId=…).
+ * @param {string} value
+ * @returns {{ templateId: string, ownerId: string, project: string, wiType: string } | null}
+ */
+export function parseCustomTemplateUrl(value) {
+  const parsed = parseReviewTemplateUrl(value);
+  if (!parsed) return null;
+
+  const tid = (parsed.templateId ?? "").trim();
+  const oid = (parsed.ownerId ?? "").trim();
+  if (!tid || !oid) return null;
+
+  const raw = String(value ?? "").trim();
+  let url = null;
+  try {
+    url = new URL(raw);
+  } catch {
+    url = null;
+  }
+
+  let project = "";
+  let wiType = "";
+  if (url) {
+    const segments = url.pathname.split("/").map((s) => {
+      try { return decodeURIComponent(s).trim(); } catch { return s.trim(); }
+    }).filter(Boolean);
+    const wiIndex = segments.findIndex((s) => s.toLowerCase() === "_workitems");
+    if (wiIndex > 0) {
+      project = segments[wiIndex - 1];
+      const createIdx = segments.findIndex((s) => s.toLowerCase() === "create");
+      if (createIdx >= 0 && segments.length > createIdx + 1) {
+        wiType = segments[createIdx + 1];
+      }
+    }
+  }
+
+  return { ...parsed, project, wiType };
+}
+
+/**
+ * Валидация ссылки на шаблон кастомной кнопки.
+ * @param {string} url
+ * @returns {string[]} ошибки
+ */
+export function validateCustomTemplateUrl(url) {
+  const errors = [];
+  const raw = String(url ?? "").trim();
+  if (!raw) {
+    errors.push("Укажите ссылку на шаблон (содержит templateId и ownerId).");
+    return errors;
+  }
+  const parsed = parseCustomTemplateUrl(raw);
+  if (!parsed?.templateId || !parsed?.ownerId) {
+    errors.push("Не удалось извлечь templateId и ownerId из ссылки на шаблон. Убедитесь, что ссылка содержит параметры templateId и ownerId.");
+  }
+  return errors;
 }

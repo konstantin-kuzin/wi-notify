@@ -2,6 +2,7 @@ import {
   ADO_CONFIG_KEY,
   DEFAULT_ADO_CONFIG,
   loadAdoConfig,
+  parseCustomTemplateUrl,
   parseReviewDesignTypes,
   validateAdoConfig,
   validateReviewConfig,
@@ -1295,6 +1296,8 @@ function readCardConfig(card) {
   return {
     id: card.dataset.id,
     name: val('[data-field="name"]').value.trim(),
+    fromTemplate: card.dataset.fromTemplate === "1",
+    templateUrl: val('[data-field="templateUrl"]').value.trim(),
     wiType: selectedType,
     wiTypeIcon: { url: iconUrl, color: iconColor },
     title: val('[data-field="title"]').value.trim(),
@@ -1810,6 +1813,27 @@ async function buildCard(config = null) {
   card.querySelector('[data-field="title"]').value = config?.title ?? "";
   card.querySelector('[data-field="titlePrefix"]').value = config?.titlePrefix ?? "";
   card.querySelector('[data-field="description"]').value = config?.description ?? "";
+  card.querySelector('[data-field="templateUrl"]').value = config?.templateUrl ?? "";
+
+  // Segmented control «Новая | Из шаблона»
+  {
+    const newBtn = card.querySelector('[data-mode="new"]');
+    const templateBtn = card.querySelector('[data-mode="template"]');
+    const templateFieldEl = card.querySelector('[data-template-field]');
+    const newOnlyFields = card.querySelectorAll('[data-new-only]');
+
+    const syncMode = (isTemplate) => {
+      card.dataset.fromTemplate = isTemplate ? "1" : "";
+      newBtn.setAttribute("aria-checked", String(!isTemplate));
+      templateBtn.setAttribute("aria-checked", String(isTemplate));
+      if (templateFieldEl) templateFieldEl.hidden = !isTemplate;
+      for (const el of newOnlyFields) el.hidden = isTemplate;
+    };
+
+    newBtn.addEventListener("click", () => syncMode(false));
+    templateBtn.addEventListener("click", () => syncMode(true));
+    syncMode(Boolean(config?.fromTemplate));
+  }
 
   const titleInput = card.querySelector('[data-field="title"]');
   const titlePrefixInput = card.querySelector('[data-field="titlePrefix"]');
@@ -1858,23 +1882,42 @@ async function buildCard(config = null) {
       setOptionsStatus(status, "Укажите название кнопки", "err");
       return;
     }
-    if (!cfg.wiType) {
-      setOptionsStatus(status, "Выберите тип Wi", "err");
-      return;
-    }
-    if (!cfg.titleFromParent && !cfg.title) {
-      setOptionsStatus(status, "Укажите название задачи или включите «из исходной задачи»", "err");
-      return;
+    if (!cfg.fromTemplate) {
+      if (!cfg.wiType) {
+        setOptionsStatus(status, "Выберите тип Wi", "err");
+        return;
+      }
+      if (!cfg.titleFromParent && !cfg.title) {
+        setOptionsStatus(status, "Укажите название задачи или включите «из исходной задачи»", "err");
+        return;
+      }
+    } else {
+      if (!cfg.templateUrl) {
+        setOptionsStatus(status, "Укажите ссылку на шаблон", "err");
+        return;
+      }
+      const parsed = parseCustomTemplateUrl(cfg.templateUrl);
+      if (!parsed?.templateId || !parsed?.ownerId) {
+        setOptionsStatus(
+          status,
+          "Не удалось извлечь templateId и ownerId из ссылки на шаблон. Убедитесь, что ссылка содержит параметры templateId и ownerId.",
+          "err",
+        );
+        return;
+      }
     }
 
     // Обязательное поле типа оставлено пустым — ADO отвергнет создание.
-    for (const row of card.querySelectorAll("[data-field-card]")) {
-      if (row.dataset.required !== "1") continue;
-      const control = row.querySelector("[data-field-value] input, [data-field-value] select");
-      if (String(control?.value ?? "").trim()) continue;
-      const fieldLabel = row.querySelector("[data-field-select]")?.selectedOptions?.[0]?.textContent ?? "";
-      setOptionsStatus(status, `Поле «${fieldLabel}» обязательно — укажите значение или удалите строку`, "err");
-      return;
+    // Доп.поля скрыты в режиме «Из шаблона» — пропускаем проверку.
+    if (!cfg.fromTemplate) {
+      for (const row of card.querySelectorAll("[data-field-card]")) {
+        if (row.dataset.required !== "1") continue;
+        const control = row.querySelector("[data-field-value] input, [data-field-value] select");
+        if (String(control?.value ?? "").trim()) continue;
+        const fieldLabel = row.querySelector("[data-field-select]")?.selectedOptions?.[0]?.textContent ?? "";
+        setOptionsStatus(status, `Поле «${fieldLabel}» обязательно — укажите значение или удалите строку`, "err");
+        return;
+      }
     }
 
     try {

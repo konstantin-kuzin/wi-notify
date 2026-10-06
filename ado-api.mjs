@@ -1,13 +1,14 @@
 import {
   isWorkItemQueryId,
   normalizeApiRoot,
+  parseCustomTemplateUrl,
   parseReviewParentId,
   parseReviewTemplateUrl,
   parseWorkItemId,
   resolveApiVersion,
   resolveReviewProject,
 } from "./ado-config.mjs";
-import { buildCustomWorkItemFields, isComputedWorkItemField } from "./custom-wi-fields.mjs";
+import { buildCustomWorkItemFields, buildTemplateWorkItemFields, isComputedWorkItemField } from "./custom-wi-fields.mjs";
 
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 900;
@@ -1301,16 +1302,6 @@ function escapeAdoHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-// Поля шаблона, которые нельзя переносить в patch создания напрямую
-// (id-поля дублируют path-варианты, а *-Add — служебные ключи шаблонов).
-const TEMPLATE_SKIP_FIELDS = new Set([
-  "System.AreaId",
-  "System.IterationId",
-  // Assigned To задаём только из настроек дизайн-лида; значение из шаблона
-  // часто не резолвится на on-prem и валит создание с HTTP 400.
-  "System.AssignedTo",
-]);
-
 /**
  * Собирает JSON-patch создания WI из карты полей (пустые значения пропускаются).
  * @param {Record<string, unknown>} createFields
@@ -1392,6 +1383,26 @@ async function createWorkItemWithAssigneeFallback(config, url, createOptions, cr
 }
 
 /**
+ * Читает командный шаблон work item (поля и тип задачи).
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} project
+ * @param {string} templateId
+ * @param {string} ownerId
+ * @returns {Promise<{ fields: Record<string, unknown>|null, workItemTypeName: string }>}
+ */
+async function fetchWorkItemTemplate(config, project, templateId, ownerId) {
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+  const data = await adoFetch(
+    config,
+    `${encodeURIComponent(project)}/${encodeURIComponent(ownerId)}/_apis/wit/templates/${encodeURIComponent(templateId)}?${query.toString()}`,
+  );
+  return {
+    fields: data?.fields ?? null,
+    workItemTypeName: normalizeText(data?.workItemTypeName),
+  };
+}
+
+/**
  * Читает поля командного шаблона задачи на ревью (work item template).
  * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
  * @returns {Promise<Record<string, unknown>|null>}
@@ -1399,22 +1410,12 @@ async function createWorkItemWithAssigneeFallback(config, url, createOptions, cr
 async function fetchReviewTemplateFields(config) {
   const rawUrl = String(config.reviewTemplateUrl ?? "").trim();
   const parsed = parseReviewTemplateUrl(rawUrl);
-
   if (!parsed?.templateId || !parsed?.ownerId) {
     return null;
   }
-
-  const project = encodeURIComponent(resolveReviewProject(config));
-  const query = new URLSearchParams({
-    "api-version": resolveApiVersion(config),
-  });
-
-  const data = await adoFetch(
-    config,
-    `${project}/${encodeURIComponent(parsed.ownerId)}/_apis/wit/templates/${encodeURIComponent(parsed.templateId)}?${query.toString()}`,
-  );
-
-  return data?.fields ?? null;
+  const project = resolveReviewProject(config);
+  const template = await fetchWorkItemTemplate(config, project, parsed.templateId, parsed.ownerId);
+  return template.fields;
 }
 
 /** Подставляет ссылку исходной задачи в раздел «Продуктовая задача» описания шаблона (FR-010).
@@ -1486,32 +1487,15 @@ export async function createReviewWorkItem(config, source) {
     templateFields = null;
   }
 
-  const createFields = {};
-
-  if (templateFields) {
-    for (const [ref, value] of Object.entries(templateFields)) {
-      if (TEMPLATE_SKIP_FIELDS.has(ref) || ref.endsWith("-Add")) {
-        continue;
-      }
-      createFields[ref] = value;
-    }
-  } else {
-    // Резервные обязательные поля типа Review.
-    createFields["KL.SizeSymbol"] = "M";
-    createFields["KL.Design"] = "New";
-  }
+  const designLead = await resolveDesignLeadAssignedTo(config);
+  const createFields = templateFields
+    ? buildTemplateWorkItemFields(templateFields, { assignedTo: designLead })
+    : { "KL.SizeSymbol": "M", "KL.Design": "New" };
 
   // FR-008: заголовок из исходной задачи; при заданном названии продукта — «[Продукт] …».
   const productName = String(config.reviewProductName ?? "").trim();
   createFields["System.Title"] = productName ? `[${productName}] ${sourceTitle}` : sourceTitle;
 
-  // Если указан дизайн-лид — назначаем задачу на него.
-  // В storage мог остаться email-формат, который on-prem TFS не принимает —
-  // перезапрашиваем Identity Picker и предпочитаем DOMAIN\alias.
-  const designLead = await resolveDesignLeadAssignedTo(config);
-  if (designLead) {
-    createFields["System.AssignedTo"] = designLead;
-  }
   createFields["System.Description"] = applyReviewDescription(
     templateFields?.["System.Description"],
     placeholder,
@@ -2003,4 +1987,120 @@ export async function createCustomWorkItem(config, buttonConfig, source) {
   }
 
   return { id: newId, url: newUrl, title: createFields["System.Title"], warnings };
+}
+
+/**
+ * Определяет проект для шаблона: если в URL-пути указан проект (не коллекция),
+ * возвращает его, иначе пустую строку.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {string} urlProject
+ * @returns {string}
+ */
+function resolveTemplateProject(config, urlProject) {
+  const candidate = normalizeText(urlProject);
+  if (!candidate) return "";
+  const root = normalizeApiRoot(config.apiRoot);
+  // Извлекаем имя коллекции из пути apiRoot (последний сегмент после хоста).
+  const rootMatch = root.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+\/(.*)$/i);
+  const rootSegments = rootMatch ? rootMatch[1].split("/").filter(Boolean) : [];
+  const collection = rootSegments[rootSegments.length - 1] ?? "";
+  // Если совпадает с коллекцией — значит проекта в пути нет.
+  if (collection && collection.toLowerCase() === candidate.toLowerCase()) {
+    return "";
+  }
+  return candidate;
+}
+
+/**
+ * Создаёт Work Item из шаблона кастомной кнопки («Из шаблона»).
+ * Поля берутся из шаблона команды; из настроек кнопки применяются
+ * «Назначить на» и «Связать». Тип задачи определяется шаблоном.
+ * @param {import("./ado-config.mjs").DEFAULT_ADO_CONFIG} config
+ * @param {object} buttonConfig
+ * @param {{ sourceId: number }} source
+ * @returns {Promise<{id:number, url:string, title:string, warnings:string[]}>}
+ */
+export async function createCustomWorkItemFromTemplate(config, buttonConfig, source) {
+  const sourceId = Number(source?.sourceId);
+  if (!Number.isInteger(sourceId) || sourceId <= 0) {
+    throw new Error("Исходная задача ещё не сохранена или не имеет номера.");
+  }
+
+  const rawUrl = String(buttonConfig?.templateUrl ?? "").trim();
+  const parsed = parseCustomTemplateUrl(rawUrl);
+  if (!parsed?.templateId || !parsed?.ownerId) {
+    throw new Error(
+      "Не удалось извлечь templateId и ownerId из ссылки на шаблон. Проверьте настройки кнопки.",
+    );
+  }
+
+  // Проект из URL-пути (если указан), иначе — проект исходной задачи.
+  const sourceWorkItem = await fetchWorkItemById(config, sourceId);
+  const sourceFields = sourceWorkItem.fields ?? {};
+  const sourceProject = normalizeText(sourceFields["System.TeamProject"]) || config.project.trim();
+  const templateProject = resolveTemplateProject(config, parsed.project);
+  const project = templateProject || sourceProject;
+
+  if (!project) {
+    throw new Error("Не удалось определить проект для создания задачи.");
+  }
+
+  const template = await fetchWorkItemTemplate(config, project, parsed.templateId, parsed.ownerId);
+  const type = template.workItemTypeName || normalizeText(parsed.wiType) || "";
+  if (!type) {
+    throw new Error("Не удалось определить тип задачи из шаблона.");
+  }
+
+  const assignedTo = await resolveAssignedToIdentity(config, buttonConfig?.assignedTo ?? "");
+  const createFields = buildTemplateWorkItemFields(template.fields, { assignedTo });
+
+  const projectSeg = encodeURIComponent(project);
+  const typeSeg = `$${encodeURIComponent(type)}`;
+  const query = new URLSearchParams({ "api-version": resolveApiVersion(config) });
+
+  const { created, warnings } = await createWorkItemWithAssigneeFallback(
+    config,
+    `${projectSeg}/_apis/wit/workitems/${typeSeg}?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json-patch+json" },
+    },
+    createFields,
+    {
+      logPrefix: "createCustomWorkItemFromTemplate",
+      assigneeWarning: `Не удалось назначить исполнителя (${assignedTo})`,
+    },
+  );
+
+  const newId = Number(created?.id);
+  if (!Number.isInteger(newId) || newId <= 0) {
+    throw new Error("Сервер не вернул номер созданной задачи.");
+  }
+
+  const newUrl = buildWorkItemWebUrl(config.apiRoot, project, newId, created);
+
+  const links = Array.isArray(buttonConfig?.links) ? buttonConfig.links : [];
+  for (const link of links) {
+    const relType = String(link?.relType ?? "").trim();
+    const targetId = link?.toParent ? sourceId : parseWorkItemId(link?.targetId);
+    if (!relType || !targetId) continue;
+    try {
+      await addWorkItemRelation(
+        config,
+        newId,
+        relType,
+        buildWorkItemApiUrl(config, targetId),
+        project,
+      );
+    } catch (error) {
+      logAdoError("createCustomWorkItemFromTemplate:link", error);
+      warnings.push(
+        `Связь ${relType} → #${targetId} не добавлена: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const title =
+    normalizeText(created?.fields?.["System.Title"]) || String(createFields["System.Title"] ?? "");
+  return { id: newId, url: newUrl, title, warnings };
 }

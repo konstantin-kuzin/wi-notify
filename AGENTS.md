@@ -35,6 +35,7 @@ options.mjs — страница настроек
 | `search-work-items` | options | Поиск WI по WIQL |
 | `create-custom-wi` | content-script | Создать WI по кастомной кнопке |
 | `create-review-task` | content-script | Создать задачу на ревью из шаблона |
+| `create-custom-wi-from-template` | content-script | Создать WI по кастомной кнопке «Из шаблона» |
 | `rewriteDescription` (action) | content-script | AI Rewrite текста через chatCompletion |
 | `ai-ping` (action) | content-script | Проверка, что background доступен |
 
