@@ -1252,6 +1252,12 @@ async function refreshCustomButtonTypeFields() {
   }
 }
 
+/** Имя копии: к текущему названию дописывается «new». */
+function duplicateButtonName(name) {
+  const base = String(name ?? "").trim();
+  return base ? `${base} new` : "new";
+}
+
 function readCardConfig(card) {
   const val = (sel) => card.querySelector(sel);
   const wiSelect = val('[data-field="wiType"]');
@@ -1933,6 +1939,40 @@ async function buildCard(config = null) {
         "Ошибка сохранения: " + (error instanceof Error ? error.message : String(error)),
         "err",
       );
+    }
+  });
+
+  card.querySelector("[data-duplicate]").addEventListener("click", async () => {
+    const duplicateBtn = card.querySelector("[data-duplicate]");
+    if (duplicateBtn.disabled) return;
+    duplicateBtn.disabled = true;
+    const status = card.querySelector("[data-status]");
+    let newCard = null;
+    try {
+      const source = readCardConfig(card);
+      newCard = await buildCard({
+        ...source,
+        id: undefined,
+        name: duplicateButtonName(source.name),
+      });
+      document.getElementById("custom-buttons-list")?.appendChild(newCard);
+      activeCustomButtonId = newCard.dataset.id;
+      renderCustomButtonsTabs();
+      updateCustomButtonsVisibility();
+
+      const stored = await loadAdoConfig();
+      const buttons = Array.isArray(stored.customReviewButtons) ? [...stored.customReviewButtons] : [];
+      buttons.push(readCardConfig(newCard));
+      await saveCustomButtons(buttons);
+      setOptionsStatus(newCard.querySelector("[data-status]"), "Кнопка продублирована", "ok");
+    } catch (error) {
+      setOptionsStatus(
+        newCard?.querySelector("[data-status]") ?? status,
+        "Ошибка дублирования: " + (error instanceof Error ? error.message : String(error)),
+        "err",
+      );
+    } finally {
+      duplicateBtn.disabled = false;
     }
   });
 

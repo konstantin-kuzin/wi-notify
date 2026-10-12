@@ -245,7 +245,14 @@ select.options__input,
 }
 
 .options__button:hover {
-  filter: brightness(1.05);
+  background: #064078;
+  border-color: #064078;
+  filter: none;
+}
+
+.options__button:active {
+  background: #042c52;
+  border-color: #042c52;
 }
 
 .options__button:disabled {
@@ -727,18 +734,50 @@ select.options__input,
   border: 1px solid #0067b8;
 }
 
+.options__button--secondary:hover {
+  filter: none;
+  background: #d6ebf8;
+  color: #0067b8;
+  border-color: #0067b8;
+}
+
+.options__button--secondary:active {
+  filter: none;
+  background: #b9daf2;
+  color: #0067b8;
+  border-color: #0067b8;
+}
+
+.options__button--danger {
+  background: #fff;
+  color: #c00;
+  border: 1px solid #c00;
+}
+
+.options__button--danger:hover {
+  filter: none;
+  background: #f8d5de;
+  color: #c00;
+  border-color: #c00;
+}
+
+.options__button--danger:active {
+  filter: none;
+  background: #f0b7c6;
+  color: #c00;
+  border-color: #c00;
+}
+
 .custom-card {
   position: relative;
   border: 1px solid #d0d0d0;
   border-radius: 8px;
   padding: 14px 16px 12px;
-  padding-right: 36px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.custom-card__remove,
 .custom-link__remove {
   position: absolute;
   top: 8px;
@@ -754,9 +793,8 @@ select.options__input,
   color: #666;
 }
 
-.custom-card__remove:hover,
 .custom-link__remove:hover {
-  background: #f0f0f0;
+  background: #f8d5de;
   color: #c00;
 }
 

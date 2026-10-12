@@ -215,8 +215,6 @@
 
       <template id="custom-button-card-template">
         <fieldset class="custom-card" data-card>
-          <button class="custom-card__remove" type="button" data-remove title="Удалить кнопку" aria-label="Удалить кнопку">×</button>
-
           <label class="options__field">
             <span class="options__label">Название кнопки</span>
             <div class="custom-name-row">
@@ -313,6 +311,8 @@
 
           <div class="options__actions">
             <button class="options__button" type="button" data-save>Сохранить</button>
+            <button class="options__button options__button--secondary" type="button" data-duplicate>Дублировать</button>
+            <button class="options__button options__button--danger" type="button" data-remove>Удалить</button>
             <span class="options__status" data-status role="status"></span>
           </div>
         </fieldset>
